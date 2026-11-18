@@ -19,11 +19,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      JRFANMAP_TOOLCHAIN_ROOT: ${{ runner.temp }}/jrfanmap-tools
-      GRADLE_USER_HOME: ${{ runner.temp }}/jrfanmap-tools/.gradle
     steps:
       - uses: actions/checkout@v4
+      - name: Configure toolchain paths
+        run: |
+          echo "JRFANMAP_TOOLCHAIN_ROOT=$RUNNER_TEMP/jrfanmap-tools" >> "$GITHUB_ENV"
+          echo "GRADLE_USER_HOME=$RUNNER_TEMP/jrfanmap-tools/.gradle" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
       - name: Restore optional fixed debug signing key
         if: github.event_name != 'pull_request'
