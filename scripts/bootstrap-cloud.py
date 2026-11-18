@@ -68,6 +68,8 @@ if trust.exists():
 properties.write_text(text.rstrip() + '\n# BEGIN JRFANMAP\n' + '\n'.join(lines) + '\n# END JRFANMAP\n')
 
 environment = dict(os.environ, JAVA_HOME=str(TOOLS / 'jdk'), ANDROID_HOME=str(SDK),
+                   # Hosted runners predefine this deprecated variable; it must agree.
+                   ANDROID_SDK_ROOT=str(SDK),
                    ANDROID_USER_HOME=str(USER), GRADLE_USER_HOME=str(GRADLE))
 if trust.exists():
     environment['JAVA_TOOL_OPTIONS'] = (environment.get('JAVA_TOOL_OPTIONS', '') +
