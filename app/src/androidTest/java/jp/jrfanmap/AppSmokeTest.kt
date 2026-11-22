@@ -66,6 +66,7 @@ class AppSmokeTest {
         compose.onNodeWithTag("rail-map-ready").performTouchInput {
             swipe(Offset(width * .75f, height * .29f), Offset(width * .30f, height * .29f))
         }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("map-preview-shinjuku").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithTag("map-preview-shinjuku").assertDoesNotExist()
         compose.onNodeWithTag("rail-info-panel").assertIsDisplayed()
         compose.onNodeWithTag("rail-info-close").performClick()

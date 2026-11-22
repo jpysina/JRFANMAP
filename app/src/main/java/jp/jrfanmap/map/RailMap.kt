@@ -17,6 +17,7 @@ import jp.jrfanmap.rail.*
 import kotlinx.coroutines.*
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.gestures.MoveGestureDetector
 import org.maplibre.android.maps.*
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
@@ -107,11 +108,17 @@ fun RailMap(
                 viewport = Viewport(RailBounds(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth),
                     instance.cameraPosition.zoom)
             }
+            fun enterFreeBrowse() {
+                showingShinjuku = false
+                gestureCallback()
+            }
+            instance.addOnMoveListener(object : MapLibreMap.OnMoveListener {
+                override fun onMoveBegin(detector: MoveGestureDetector) = enterFreeBrowse()
+                override fun onMove(detector: MoveGestureDetector) = Unit
+                override fun onMoveEnd(detector: MoveGestureDetector) = Unit
+            })
             instance.addOnCameraMoveStartedListener { reason ->
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
-                    showingShinjuku = false
-                    gestureCallback()
-                }
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) enterFreeBrowse()
             }
             instance.addOnMapClickListener { location ->
                 val pixel = instance.projection.toScreenLocation(location)
