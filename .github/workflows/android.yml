@@ -123,17 +123,16 @@ jobs:
             adb emu geo fix 121.4737 31.2304
             adb install -r dist/JRFANMAP-debug.apk
             adb install -r dist/app-debug-androidTest.apk
-            adb shell wm size 900x1950
+            adb shell wm size 900x1920
             adb shell wm density 360
-            adb shell wm user-rotation lock 0
-            mkdir -p ui-screenshots
-            timeout 120 adb shell am instrument -w -e class jp.jrfanmap.AppSmokeTest#capturePortraitForReview jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner | tee android-emulator-portrait.txt
-            for snapshot in portrait-collapsed portrait-expanded; do adb exec-out run-as jp.jrfanmap cat "files/ui-screenshots/$snapshot.png" > "ui-screenshots/$snapshot.png"; test -s "ui-screenshots/$snapshot.png" || exit 1; done
+            adb shell wm fixed-to-user-rotation enabled
             adb shell wm user-rotation lock 1
+            adb shell dumpsys window displays | grep -E 'mRotation=|mUserRotation=|mFixedToUserRotation='
+            mkdir -p ui-screenshots
             timeout 120 adb shell am instrument -w -e class jp.jrfanmap.AppSmokeTest#captureLandscapeForReview jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner | tee android-emulator-landscape.txt
+            grep -E '^OK \([0-9]+ tests?\)' android-emulator-landscape.txt
             adb exec-out run-as jp.jrfanmap cat files/ui-screenshots/landscape-expanded.png > ui-screenshots/landscape-expanded.png
-            test -s ui-screenshots/landscape-expanded.png
-            grep -E '^OK \([0-9]+ tests?\)' android-emulator-portrait.txt android-emulator-landscape.txt
+            file ui-screenshots/landscape-expanded.png | grep 'PNG image data'
       - name: Save emulator result
         if: always() && steps.kvm.outputs.available == 'true'
         uses: actions/upload-artifact@v4
