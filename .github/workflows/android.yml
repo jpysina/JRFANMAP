@@ -125,13 +125,16 @@ jobs:
             adb install -r dist/app-debug-androidTest.apk
             adb shell am instrument -w jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator.txt
             cat android-emulator.txt
+            mkdir -p ui-screenshots && for snapshot in portrait-collapsed portrait-expanded landscape-expanded; do adb exec-out run-as jp.jrfanmap cat "files/ui-screenshots/$snapshot.png" > "ui-screenshots/$snapshot.png"; test -s "ui-screenshots/$snapshot.png" || exit 1; done
             grep -E '^OK \([0-9]+ tests?\)' android-emulator.txt
       - name: Save emulator result
         if: always() && steps.kvm.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: android-emulator-${{ github.run_id }}-${{ github.run_attempt }}
-          path: android-emulator.txt
+          path: |
+            android-emulator.txt
+            ui-screenshots/*.png
           retention-days: 14
 
   publish:

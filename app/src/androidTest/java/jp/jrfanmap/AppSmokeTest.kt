@@ -8,8 +8,11 @@ import jp.jrfanmap.rail.RailBounds
 import jp.jrfanmap.RailApplication
 import androidx.test.rule.GrantPermissionRule
 import android.Manifest
+import android.content.pm.ActivityInfo
+import android.graphics.Bitmap
 import android.os.SystemClock
 import androidx.compose.ui.geometry.Offset
+import androidx.test.platform.app.InstrumentationRegistry
 import jp.jrfanmap.data.TripDatabase
 import jp.jrfanmap.map.DownloadArea
 import org.maplibre.android.geometry.LatLngBounds
@@ -27,6 +30,58 @@ class AppSmokeTest {
     @get:Rule(order = 0) val permission = GrantPermissionRule.grant(
         Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
     @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test fun captureRailMapReviewScreenshots() {
+        val store = (compose.activity.application as RailApplication).store
+        assertTrue(store.catalog.prepare().lines > 500)
+        compose.onNodeWithTag("tab-2").performClick()
+        openLineForReview()
+        takeReviewScreenshot("portrait-collapsed")
+        compose.onNodeWithTag("rail-info-expand").performClick()
+        compose.onNodeWithText("站点名录").assertExists()
+        takeReviewScreenshot("portrait-expanded")
+        compose.activityRule.scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        compose.waitUntil(20_000) {
+            compose.onAllNodesWithTag("map-page").fetchSemanticsNodes().singleOrNull()?.boundsInRoot?.let {
+                it.width > it.height
+            } == true
+        }
+        openLineForReview()
+        compose.onNodeWithTag("rail-info-expand").performClick()
+        compose.onNodeWithText("站点名录").assertExists()
+        takeReviewScreenshot("landscape-expanded")
+        compose.activityRule.scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+    }
+
+    private fun openLineForReview() {
+        compose.waitUntil(20_000) {
+            compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithTag("map-preview-shinjuku").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("rail-map-ready").performTouchInput { click(center) }
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-info-expand").fetchSemanticsNodes().isNotEmpty() }
+        val choices = compose.onAllNodesWithTag("rail-choice")
+        if (choices.fetchSemanticsNodes().isNotEmpty()) {
+            val yamanote = compose.onAllNodesWithText("山手線")
+            val choice = if (yamanote.fetchSemanticsNodes().isNotEmpty()) yamanote.onFirst() else choices.onFirst()
+            choice.performScrollTo().performClick()
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-info-expand").fetchSemanticsNodes().isNotEmpty() }
+        }
+        compose.onNodeWithTag("rail-info-panel").assertIsDisplayed()
+    }
+
+    private fun takeReviewScreenshot(name: String) {
+        compose.waitForIdle()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val destination = File(instrumentation.targetContext.filesDir, "ui-screenshots")
+        destination.mkdirs()
+        val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        try {
+            File(destination, "$name.png").outputStream().use { output ->
+                assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, output))
+            }
+        } finally { screenshot.recycle() }
+    }
 
     @Test fun opensEachPageAndEntersImmersiveMode() {
         compose.onNodeWithTag("live-page").assertIsDisplayed()
