@@ -123,15 +123,28 @@ jobs:
             adb emu geo fix 121.4737 31.2304
             adb install -r dist/JRFANMAP-debug.apk
             adb install -r dist/app-debug-androidTest.apk
-            adb shell am instrument -w jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator.txt
+            adb shell wm size 900x1920
+            adb shell wm density 360
+            adb shell wm fixed-to-user-rotation enabled
+            adb shell wm user-rotation lock 0
+            timeout 120 adb shell am instrument -w -e class jp.jrfanmap.AppSmokeTest jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator.txt
             cat android-emulator.txt
-            grep -E '^OK \([0-9]+ tests?\)' android-emulator.txt
+            mkdir -p ui-screenshots
+            timeout 120 adb shell am instrument -w -e class jp.jrfanmap.RailScreenshotTest#capturePortraitForReview jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator-portrait.txt
+            cat android-emulator-portrait.txt
+            adb shell wm user-rotation lock 1
+            timeout 120 adb shell am instrument -w -e class jp.jrfanmap.RailScreenshotTest#captureLandscapeForReview jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator-landscape.txt
+            cat android-emulator-landscape.txt
+            for snapshot in portrait-collapsed portrait-expanded portrait-live landscape-expanded; do adb exec-out run-as jp.jrfanmap cat "files/ui-screenshots/$snapshot.png" > "ui-screenshots/$snapshot.png"; file "ui-screenshots/$snapshot.png" | grep 'PNG image data' || exit 1; done
+            grep -E '^OK \(6 tests\)' android-emulator.txt && grep -E '^OK \(1 test\)' android-emulator-portrait.txt && grep -E '^OK \(1 test\)' android-emulator-landscape.txt
       - name: Save emulator result
         if: always() && steps.kvm.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: android-emulator-${{ github.run_id }}-${{ github.run_attempt }}
-          path: android-emulator.txt
+          path: |
+            android-emulator*.txt
+            ui-screenshots/*.png
           retention-days: 14
 
   publish:
