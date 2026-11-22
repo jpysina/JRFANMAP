@@ -8,7 +8,6 @@ import jp.jrfanmap.rail.RailBounds
 import jp.jrfanmap.RailApplication
 import androidx.test.rule.GrantPermissionRule
 import android.Manifest
-import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.os.SystemClock
 import androidx.compose.ui.geometry.Offset
@@ -31,7 +30,7 @@ class AppSmokeTest {
         Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
     @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
 
-    @Test fun captureRailMapReviewScreenshots() {
+    @Test fun capturePortraitForReview() {
         val store = (compose.activity.application as RailApplication).store
         assertTrue(store.catalog.prepare().lines > 500)
         compose.onNodeWithTag("tab-2").performClick()
@@ -40,7 +39,12 @@ class AppSmokeTest {
         compose.onNodeWithTag("rail-info-expand").performClick()
         compose.onNodeWithText("站点名录").assertExists()
         takeReviewScreenshot("portrait-expanded")
-        compose.activityRule.scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+    }
+
+    @Test fun captureLandscapeForReview() {
+        val store = (compose.activity.application as RailApplication).store
+        assertTrue(store.catalog.prepare().lines > 500)
+        compose.onNodeWithTag("tab-2").performClick()
         compose.waitUntil(20_000) {
             compose.onAllNodesWithTag("map-page").fetchSemanticsNodes().singleOrNull()?.boundsInRoot?.let {
                 it.width > it.height
@@ -50,7 +54,6 @@ class AppSmokeTest {
         compose.onNodeWithTag("rail-info-expand").performClick()
         compose.onNodeWithText("站点名录").assertExists()
         takeReviewScreenshot("landscape-expanded")
-        compose.activityRule.scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
     }
 
     private fun openLineForReview() {
