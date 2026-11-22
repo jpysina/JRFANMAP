@@ -2,6 +2,7 @@ package jp.jrfanmap
 
 import android.Manifest
 import android.graphics.Bitmap
+import android.graphics.Color
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -34,10 +35,30 @@ class RailScreenshotTest {
     }
 
     @Test fun captureLiveForReview() {
+        val store = (compose.activity.application as RailApplication).store
+        assertTrue(store.catalog.prepare().lines > 500)
         compose.onNodeWithTag("live-page").assertIsDisplayed()
         compose.onNodeWithText("全屏").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(20_000) { hasRenderedTracks() }
+        val status = compose.onNodeWithText("LIVE ·", substring = true).fetchSemanticsNode().boundsInRoot
+        val preview = compose.onNodeWithTag("map-preview-shinjuku").fetchSemanticsNode().boundsInRoot
+        assertTrue("Location labels do not overlap", status.bottom <= preview.top)
         takeReviewScreenshot("portrait-live")
+    }
+
+    private fun hasRenderedTracks(): Boolean {
+        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return false
+        return try {
+            (bitmap.height / 4 until bitmap.height * 3 / 4 step 4).any { y ->
+                (bitmap.width / 5 until bitmap.width * 4 / 5 step 4).any { x ->
+                    val pixel = bitmap.getPixel(x, y)
+                    Color.red(pixel) < 30 && Color.green(pixel) in 110..135 && Color.blue(pixel) in 120..145
+                }
+            }
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     @Test fun captureLandscapeForReview() {

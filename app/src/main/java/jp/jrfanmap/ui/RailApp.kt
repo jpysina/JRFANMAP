@@ -134,10 +134,13 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
 
         Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(9.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Top) {
-            Surface(shape = Cut, color = Ink.copy(alpha = .96f)) {
-                Text("LIVE · " + status, Modifier.widthIn(max = 143.dp).padding(horizontal = 10.dp, vertical = 10.dp),
-                    color = if (fresh) Signal else Color(0xFFFFCF94), fontSize = 12.sp, maxLines = 2,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Surface(shape = Cut, color = Ink.copy(alpha = .93f)) {
+                    Text("LIVE · " + status, Modifier.widthIn(max = 145.dp).padding(horizontal = 8.dp, vertical = 5.dp),
+                        color = if (fresh) Signal else Color(0xFFFFCF94), fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis)
+                }
+                if (preview) PreviewCaption(Modifier)
             }
             Spacer(Modifier.weight(1f))
             Surface(shape = Cut, color = Panel, shadowElevation = 2.dp) {
@@ -152,8 +155,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
             }
         }
 
-        if (preview) PreviewCaption(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 66.dp))
-        if (selectedIds.isEmpty() && stationName == null) Column(Modifier.align(Alignment.BottomStart).padding(start = 8.dp, end = 8.dp, bottom = 24.dp)
+        if (selectedIds.isEmpty() && stationName == null) Column(Modifier.align(Alignment.BottomStart).padding(start = 8.dp, end = 8.dp, bottom = 29.dp)
             .then(if (wide) Modifier.width((maxWidth * .38f).coerceAtMost(278.dp)) else Modifier.widthIn(max = 310.dp).fillMaxWidth())
             .heightIn(max = overlayHeight.coerceAtLeast(100.dp)).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -225,8 +227,9 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
                 Text(error, Modifier.padding(8.dp), color = Amber, fontSize = 11.sp)
             }
         }
-        Surface(Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 5.dp), color = Ink.copy(alpha = .9f), shape = Cut) {
-            Text("国土交通省・国土地理院", Modifier.padding(horizontal = 6.dp, vertical = 2.dp), color = Color.White, fontSize = 10.sp)
+        Surface(Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp), color = Ink.copy(alpha = .86f), shape = Cut) {
+            Text("国土交通省・国土地理院", Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                color = Color.White, fontSize = 9.sp, lineHeight = 12.sp)
         }
         RailSelection(model, selectedIds, stationName) { selectedIds = emptyList(); stationName = null }
     }
