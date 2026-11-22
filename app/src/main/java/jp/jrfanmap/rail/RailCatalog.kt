@@ -60,7 +60,7 @@ class RailCatalog(private val context: Context) : SQLiteOpenHelper(context, "rai
         return info()
     }
 
-    suspend fun update(report: (String) -> Unit): CatalogInfo = withContext(Dispatchers.IO) {
+    suspend fun update(reinstall: Boolean, report: (String) -> Unit): CatalogInfo = withContext(Dispatchers.IO) {
         val previous = prepare()
         report("检查国土交通省数据版本…")
         val index = readPage(URI(CATALOG_INDEX))
@@ -73,13 +73,12 @@ class RailCatalog(private val context: Context) : SQLiteOpenHelper(context, "rai
         val latest = archiveRegex.findAll(html).maxByOrNull { it.groupValues[1].toInt() }
             ?: error("未识别到官方数据版本")
         val year = 2000 + latest.groupValues[1].toInt()
-        if (year <= previous.year) return@withContext previous
+        if (year < previous.year || (year == previous.year && !reinstall)) return@withContext previous
         val url = detailPage.resolve(latest.value).toURL()
         val tmp = java.io.File.createTempFile("rail-n02-", ".zip", context.cacheDir)
         try {
             report("下载 $year 年度铁路数据…")
-            val source = url.openConnection().apply { connectTimeout = 15_000; readTimeout = 30_000 }
-            source.getInputStream().use { input ->
+            publicRequest(url.toURI()) { input ->
                 tmp.outputStream().use { output ->
                     val buffer = ByteArray(64 * 1024)
                     var total = 0L
@@ -110,10 +109,22 @@ class RailCatalog(private val context: Context) : SQLiteOpenHelper(context, "rai
         }
     }
 
-    private fun readPage(uri: URI): String = uri.toURL().openConnection().apply {
-        connectTimeout = 15_000
-        readTimeout = 15_000
-    }.getInputStream().use { it.readNBytesBounded(1_000_000).decodeToString() }
+    private fun readPage(uri: URI): String = publicRequest(uri) { it.readNBytesBounded(1_000_000).decodeToString() }
+
+    private fun <T> publicRequest(uri: URI, read: (java.io.InputStream) -> T): T {
+        val connection = uri.toURL().openConnection() as java.net.HttpURLConnection
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 30_000
+        connection.instanceFollowRedirects = false
+        connection.setRequestProperty("User-Agent", "JRFANMAP/0.2.1 Android")
+        try {
+            val status = connection.responseCode
+            if (status != 200) throw PublicCatalogHttpException(status)
+            return connection.inputStream.use(read)
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     private fun replace(year: Int, load: ((String, String, String, String, List<GeoPoint>) -> Unit) -> Unit) {
         val db = writableDatabase
@@ -187,11 +198,28 @@ class RailCatalog(private val context: Context) : SQLiteOpenHelper(context, "rai
         return RailNetwork(line, readSections("line=?", args), stations)
     }
 
+    fun lines(ids: List<Long>): List<RailLine> {
+        if (ids.isEmpty()) return emptyList()
+        val placeholders = ids.joinToString(",") { "?" }
+        val byId = readableDatabase.rawQuery("SELECT id,operator,name,category FROM lines WHERE id IN ($placeholders)",
+            ids.map { it.toString() }.toTypedArray()).use { cursor ->
+            buildMap {
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    put(id, RailLine(id, cursor.getString(1), cursor.getString(2), cursor.getString(3)))
+                }
+            }
+        }
+        return ids.mapNotNull(byId::get)
+    }
+
     private fun decodeShape(value: String) = value.split(';').map {
         val (lon, lat) = it.split(',', limit = 2)
         GeoPoint(lon.toDouble(), lat.toDouble())
     }
 }
+
+class PublicCatalogHttpException(val status: Int) : java.io.IOException("国土交通省返回 HTTP $status")
 
 internal fun java.io.InputStream.readNBytesBounded(limit: Int): ByteArray {
     val result = java.io.ByteArrayOutputStream()

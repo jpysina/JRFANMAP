@@ -55,7 +55,6 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         model.store.monitor.visible(true)
-        model.setForeground(true)
         val preferences = getPreferences(0)
         if (!hasPreciseLocation() && !preferences.getBoolean("locationRequested", false)) {
             preferences.edit().putBoolean("locationRequested", true).apply()
@@ -64,7 +63,6 @@ class MainActivity : ComponentActivity() {
     }
     override fun onResume() { super.onResume(); model.store.monitor.visible(true) }
     override fun onStop() {
-        model.setForeground(false)
         model.store.monitor.visible(false)
         super.onStop()
     }

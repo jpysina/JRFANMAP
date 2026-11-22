@@ -1,97 +1,198 @@
 package jp.jrfanmap.map
 
 import android.content.Context
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
+import jp.jrfanmap.rail.readNBytesBounded
 import org.maplibre.android.geometry.LatLngBounds
-import org.maplibre.android.offline.*
+import java.io.File
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URI
+import java.util.UUID
 import kotlin.math.*
 
 data class DownloadArea(val bounds: LatLngBounds, val minZoom: Int, val maxZoom: Int, val tiles: Int)
-data class OfflineState(val message: String = "尚未下载区域", val count: Int = 0, val busy: Boolean = false)
+data class GsiRegion(val id: String, val south: Double, val west: Double, val north: Double,
+                     val east: Double, val minZoom: Int, val maxZoom: Int, val tileUrl: String)
+data class OfflineState(val message: String = "正在读取离线地图…", val regions: List<GsiRegion> = emptyList(), val busy: Boolean = true) {
+    val count get() = regions.size
+}
+internal data class Tile(val zoom: Int, val x: Int, val y: Int) {
+    val path get() = "${zoom}/${x}/${y}.png"
+}
 
 object TileBudget {
-    fun count(north: Double, south: Double, east: Double, west: Double, min: Int, max: Int): Int {
-        if (east <= west || north <= south || min < 0 || max > 16 || min > max) return Int.MAX_VALUE
-        var total = 0L
-        for (z in min..max) {
-            val n = 2.0.pow(z)
-            fun x(lon: Double) = floor((lon + 180) / 360 * n).toLong().coerceIn(0, n.toLong() - 1)
-            fun y(lat: Double): Long {
-                val r = Math.toRadians(lat.coerceIn(-85.0511, 85.0511))
-                return floor((1 - ln(tan(r) + 1 / cos(r)) / Math.PI) / 2 * n).toLong().coerceIn(0, n.toLong() - 1)
+    const val LIMIT = 600
+    private fun grid(north: Double, south: Double, east: Double, west: Double, min: Int, max: Int):
+        List<Triple<Int, IntRange, IntRange>>? {
+        if (!listOf(north, south, east, west).all(Double::isFinite) ||
+            west < -180 || east > 180 || east <= west || north <= south || min !in 0..16 || max !in min..16) return null
+        return (min..max).map { z ->
+            val n = 1 shl z
+            fun x(lon: Double) = floor((lon + 180) / 360 * n).toInt().coerceIn(0, n - 1)
+            fun y(lat: Double): Int {
+                val r = Math.toRadians(lat.coerceIn(-85.05112878, 85.05112878))
+                return floor((1 - ln(tan(r) + 1 / cos(r)) / Math.PI) / 2 * n).toInt().coerceIn(0, n - 1)
             }
-            total += (x(east) - x(west) + 1) * (y(south) - y(north) + 1)
+            Triple(z, x(west)..x(east), y(north)..y(south))
         }
-        return total.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+
+    fun count(north: Double, south: Double, east: Double, west: Double, min: Int, max: Int): Int =
+        grid(north, south, east, west, min, max)?.sumOf { (_, xs, ys) ->
+            (xs.last - xs.first + 1L) * (ys.last - ys.first + 1L)
+        }?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: Int.MAX_VALUE
+
+    internal fun tiles(north: Double, south: Double, east: Double, west: Double, min: Int, max: Int): List<Tile> {
+        require(count(north, south, east, west, min, max) in 1..LIMIT) { "地图范围过大，请放大后重试" }
+        return grid(north, south, east, west, min, max)!!.flatMap { (z, xs, ys) ->
+            xs.flatMap { x -> ys.map { y -> Tile(z, x, y) } }
+        }
     }
 }
 
+internal const val GSI_STANDARD = "https://maps.gsi.go.jp/xyz/std/"
+internal const val GSI_ATTRIBUTION = """<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院・地理院タイル（標準地図）</a>"""
+private const val REGIONS_LIMIT = 5
+private const val REGION_SIZE_LIMIT = 128L * 1024 * 1024
+
+/** Saves complete regions as local tile pyramids. A failed or canceled transfer never becomes visible. */
 class OfflineMaps(context: Context) {
-    private val manager = OfflineManager.getInstance(context.applicationContext)
+    private val root = File(context.filesDir, "gsi-standard")
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val stateValue = MutableStateFlow(OfflineState())
     val state = stateValue.asStateFlow()
-    private var regions = listOf<OfflineRegion>()
+    private var operation: Job? = null
+
     init {
-        manager.setMaximumAmbientCacheSize(128L * 1024 * 1024, object : OfflineManager.FileSourceCallback {
-            override fun onSuccess() = Unit
-            override fun onError(message: String) { stateValue.value = stateValue.value.copy(message = "缓存配置失败：$message") }
-        })
-        reload()
-    }
-    fun reload() {
-        manager.listOfflineRegions(object : OfflineManager.ListOfflineRegionsCallback {
-            override fun onList(list: Array<OfflineRegion>?) {
-                regions = list?.toList().orEmpty()
-                stateValue.value = OfflineState("已保存 ${regions.size} 个区域（含未完成区域）", regions.size)
+        scope.launch {
+            val regions = withContext(Dispatchers.IO) {
+                root.listFiles()?.filter { it.name.startsWith(".downloading-") }?.forEach(File::deleteRecursively)
+                readRegions()
             }
-            override fun onError(error: String) { stateValue.value = OfflineState("无法读取离线区域：$error") }
-        })
+            stateValue.value = OfflineState(summary(regions), regions, false)
+        }
     }
+
     fun download(area: DownloadArea) {
-        if (stateValue.value.busy) return
-        if (area.tiles > 1500 || regions.size >= 5) {
-            stateValue.value = stateValue.value.copy(message = "请缩小地图范围（每区最多 1500 瓦片，最多 5 区）"); return
+        val previous = stateValue.value
+        if (previous.busy) return
+        if (area.tiles !in 1..TileBudget.LIMIT || previous.count >= REGIONS_LIMIT) {
+            stateValue.value = previous.copy(message = "请缩小下载范围或删除已有区域（最多 ${REGIONS_LIMIT} 区）")
+            return
         }
-        stateValue.value = stateValue.value.copy(busy = true, message = "创建离线区域…")
-        val definition = OfflineTilePyramidRegionDefinition(STYLE, area.bounds, area.minZoom.toDouble(), area.maxZoom.toDouble(), 1f)
-        manager.createOfflineRegion(definition, "GSI vector · local region".toByteArray(), object : OfflineManager.CreateOfflineRegionCallback {
-            override fun onCreate(region: OfflineRegion) {
-                regions = regions + region
-                region.setObserver(object : OfflineRegion.OfflineRegionObserver {
-                    override fun onStatusChanged(status: OfflineRegionStatus) {
-                        val mb = status.completedResourceSize / 1024.0 / 1024.0
-                        stateValue.value = OfflineState("${if (status.isComplete) "下载完成" else "下载中"} · ${status.completedResourceCount}/${status.requiredResourceCount} 资源 · %.1f MB".format(mb), regions.size, !status.isComplete)
-                        if (status.isComplete) region.setDownloadState(OfflineRegion.STATE_INACTIVE)
+        stateValue.value = previous.copy(busy = true, message = "正在准备地理院标准地图…")
+        operation = scope.launch {
+            val id = UUID.randomUUID().toString()
+            val staging = File(root, ".downloading-$id")
+            val region = File(root, id)
+            val bounds = area.bounds
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    val tiles = TileBudget.tiles(bounds.latitudeNorth, bounds.latitudeSouth, bounds.longitudeEast,
+                        bounds.longitudeWest, area.minZoom, area.maxZoom)
+                    check(staging.mkdirs()) { "无法创建地图缓存，请检查存储空间" }
+                    var bytes = 0L
+                    var downloaded = 0
+                    for ((index, tile) in tiles.withIndex()) {
+                        ensureActive()
+                        val image = readGsiTile(tile)
+                        if (image != null) {
+                            bytes += image.size
+                            check(bytes <= REGION_SIZE_LIMIT) { "下载超过 128 MiB，请缩小范围" }
+                            val file = File(staging, tile.path)
+                            file.parentFile?.mkdirs()
+                            file.writeBytes(image)
+                            downloaded++
+                        }
+                        stateValue.value = previous.copy(busy = true, message = "下载地图 ${index + 1}/${tiles.size} · ${bytes / 1048576} MiB")
                     }
-                    override fun onError(error: OfflineRegionError) {
-                        region.setDownloadState(OfflineRegion.STATE_INACTIVE)
-                        stateValue.value = OfflineState("下载中断：${error.message}。可删除后重试。", regions.size)
-                    }
-                    override fun mapboxTileCountLimitExceeded(limit: Long) {
-                        region.setDownloadState(OfflineRegion.STATE_INACTIVE)
-                        stateValue.value = OfflineState("离线瓦片配额已满，请删除区域", regions.size)
-                    }
-                })
-                region.setDownloadState(OfflineRegion.STATE_ACTIVE)
+                    check(downloaded > 0) { "所选范围没有地理院标准地图，请移到日本陆地附近" }
+                    File(staging, "region.json").writeText(JSONObject()
+                        .put("north", bounds.latitudeNorth).put("south", bounds.latitudeSouth)
+                        .put("west", bounds.longitudeWest).put("east", bounds.longitudeEast)
+                        .put("min", area.minZoom).put("max", area.maxZoom).toString())
+                    ensureActive()
+                    check(staging.renameTo(region)) { "无法保存离线区域，请检查存储空间" }
+                    summary(readRegions())
+                }
+            } catch (_: CancellationException) {
+                "下载已取消"
+            } catch (error: Exception) {
+                "地图下载失败 · ${downloadError(error)}"
             }
-            override fun onError(error: String) { stateValue.value = stateValue.value.copy(busy = false, message = "创建失败：$error") }
-        })
-    }
-    fun pause() {
-        regions.forEach { it.setDownloadState(OfflineRegion.STATE_INACTIVE) }
-        stateValue.value = stateValue.value.copy(busy = false, message = "下载已停止；未完成区域可删除后重新下载")
-    }
-    fun deleteAll() {
-        pause()
-        if (regions.isEmpty()) return
-        val pending = regions.toMutableSet()
-        regions.toList().forEach { region ->
-            region.delete(object : OfflineRegion.OfflineRegionDeleteCallback {
-                override fun onDelete() { pending.remove(region); if (pending.isEmpty()) reload() }
-                override fun onError(error: String) { stateValue.value = stateValue.value.copy(message = "删除失败：$error") }
-            })
+            withContext(NonCancellable) {
+                val regions = withContext(Dispatchers.IO) { staging.deleteRecursively(); readRegions() }
+                stateValue.value = OfflineState(result, regions, false)
+                operation = null
+            }
         }
     }
-    companion object { const val STYLE = "asset://gsi-style.json" }
+
+    fun pause() { operation?.cancel() }
+
+    fun deleteAll() {
+        val state = stateValue.value
+        if (state.busy || state.count == 0) return
+        stateValue.value = state.copy(busy = true, message = "正在删除离线地图…")
+        scope.launch {
+            val (deleted, regions) = withContext(Dispatchers.IO) {
+                val results = state.regions.map { File(root, it.id).deleteRecursively() }
+                results.all { it } to readRegions()
+            }
+            stateValue.value = OfflineState(if (deleted) summary(regions) else "有区域未能删除，请重试", regions, false)
+        }
+    }
+
+    private fun readRegions(): List<GsiRegion> = root.listFiles().orEmpty().mapNotNull { folder ->
+        if (!folder.isDirectory || folder.name.startsWith('.')) return@mapNotNull null
+        runCatching {
+            val data = JSONObject(File(folder, "region.json").readText())
+            GsiRegion(folder.name, data.getDouble("south"), data.getDouble("west"), data.getDouble("north"),
+                data.getDouble("east"), data.getInt("min"), data.getInt("max"),
+                folder.toURI().toASCIIString().replaceFirst("file:/", "file:///") + "{z}/{x}/{y}.png")
+        }.getOrNull()
+    }.sortedBy { it.id }
+
+    private fun summary(regions: List<GsiRegion>) =
+        if (regions.isEmpty()) "尚未下载区域" else "已保存 ${regions.size} 个离线区域"
+}
+
+internal class PublicTileHttpException(val code: Int) : IOException("HTTP $code")
+private fun downloadError(error: Exception) = when (error) {
+    is PublicTileHttpException -> "地理院返回 HTTP ${error.code}，请稍后重试"
+    is java.net.SocketTimeoutException -> "连接地理院超时，请检查网络"
+    is java.net.UnknownHostException, is java.net.ConnectException -> "无法连接地理院，请检查网络"
+    is javax.net.ssl.SSLException -> "无法验证地理院 HTTPS 连接"
+    else -> error.message ?: "写入或网络连接出错"
+}
+
+private fun readGsiTile(tile: Tile): ByteArray? {
+    val connection = URI(GSI_STANDARD + tile.path).toURL().openConnection() as HttpURLConnection
+    connection.connectTimeout = 12_000
+    connection.readTimeout = 15_000
+    connection.instanceFollowRedirects = false
+    connection.setRequestProperty("User-Agent", "JRFANMAP/0.2.1 Android")
+    connection.setRequestProperty("Accept", "image/png")
+    return try {
+        when (val status = connection.responseCode) {
+            200 -> connection.inputStream.use { it.readNBytesBounded(2_000_000) }.also {
+                check(isGsiPng(it)) { "地理院未返回有效的 256×256 PNG 瓦片" }
+            }
+            404 -> null
+            else -> throw PublicTileHttpException(status)
+        }
+    } finally { connection.disconnect() }
+}
+
+internal fun isGsiPng(bytes: ByteArray): Boolean {
+    if (bytes.size < 45) return false
+    val header = java.nio.ByteBuffer.wrap(bytes)
+    if (header.long != -8552249625308161526L || header.int != 13 || header.int != 0x49484452 ||
+        header.int != 256 || header.int != 256) return false
+    // Require the final IEND chunk so a truncated HTTP response cannot become a saved tile.
+    return java.nio.ByteBuffer.wrap(bytes, bytes.size - 12, 12).let { it.int == 0 && it.int == 0x49454e44 && it.int == -1371381630 }
 }

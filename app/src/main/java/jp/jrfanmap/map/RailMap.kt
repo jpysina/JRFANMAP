@@ -1,36 +1,48 @@
 package jp.jrfanmap.map
 
 import android.graphics.RectF
+import android.graphics.PointF
 import android.os.Bundle
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import jp.jrfanmap.data.Fix
 import jp.jrfanmap.rail.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.*
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.RasterLayer
+import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.PropertyFactory.*
 import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.android.style.sources.RasterSource
+import org.maplibre.android.style.sources.TileSet
 import org.maplibre.geojson.*
 
 class MapHandle {
     internal var map: MapLibreMap? = null
     fun area(): DownloadArea? = map?.let {
         val b = it.projection.visibleRegion.latLngBounds
-        val min = (it.cameraPosition.zoom.toInt() - 1).coerceIn(4, 15)
-        val max = (min + 2).coerceAtMost(16)
+        val min = (it.cameraPosition.zoom.toInt() - 1).coerceIn(4, 14)
+        val max = (min + 3).coerceAtMost(16)
         DownloadArea(b, min, max, TileBudget.count(b.latitudeNorth, b.latitudeSouth, b.longitudeEast, b.longitudeWest, min, max))
     }
 }
+
+enum class MapBase { RAIL, STANDARD, VECTOR }
+
+private const val SCHEMATIC_STYLE = "asset://rail-schematic.json"
+private const val VECTOR_STYLE = "asset://gsi-style.json"
+private const val HIGHLIGHT = "matched-line"
+private const val GSI_LAYER_PREFIX = "gsi-raster-"
 
 private data class Viewport(val bounds: RailBounds, val zoom: Double)
 private const val TRACKS = "local-railway-lines"
@@ -38,13 +50,19 @@ private const val STATIONS = "local-railway-stations"
 
 @Composable
 fun RailMap(
-    fix: Fix?, path: List<Fix>, follow: Boolean, handle: MapHandle, showGsi: Boolean, catalogYear: Int,
+    fix: Fix?, path: List<Fix>, follow: Boolean, handle: MapHandle, base: MapBase, online: Boolean,
+    regions: List<GsiRegion>, catalogYear: Int,
     loadRail: suspend (RailBounds, Boolean) -> Pair<List<RailSection>, List<RailStation>>,
     onLines: (List<Long>) -> Unit, onStation: (String) -> Unit,
-    modifier: Modifier = Modifier, onError: (String) -> Unit
+    modifier: Modifier = Modifier, matchedLine: Long? = null, ahead: List<AheadStation> = emptyList(),
+    onGesture: () -> Unit = {}, onEmptyTap: () -> Unit = {}, onError: (String) -> Unit
 ) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    val gestureCallback by rememberUpdatedState(onGesture)
+    val emptyTapCallback by rememberUpdatedState(onEmptyTap)
+    var tapJob by remember { mutableStateOf<Job?>(null) }
     val view = remember { MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(true)).apply { onCreate(Bundle()) } }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var loadedStyle by remember { mutableStateOf<Style?>(null) }
@@ -53,11 +71,12 @@ fun RailMap(
     val lineCallback by rememberUpdatedState(onLines)
     val stationCallback by rememberUpdatedState(onStation)
     val loadCallback by rememberUpdatedState(loadRail)
+    val detailStyle = base == MapBase.VECTOR && online
     DisposableEffect(view, owner) {
         var disposed = false
         var started = false
         var resumed = false
-        val listener = MapView.OnDidFailLoadingMapListener { errorCallback("地图加载失败，可切换到内置铁路地图") }
+        val listener = MapView.OnDidFailLoadingMapListener { errorCallback("地图加载失败，可切回铁路底图") }
         view.addOnDidFailLoadingMapListener(listener)
         view.getMapAsync { instance ->
             if (disposed) return@getMapAsync
@@ -74,18 +93,41 @@ fun RailMap(
                 viewport = Viewport(RailBounds(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth),
                     instance.cameraPosition.zoom)
             }
+            instance.addOnCameraMoveStartedListener { reason ->
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) gestureCallback()
+            }
             instance.addOnMapClickListener { location ->
                 val pixel = instance.projection.toScreenLocation(location)
-                val radius = 14 * context.resources.displayMetrics.density
+                val radius = 22 * context.resources.displayMetrics.density
                 val rect = RectF(pixel.x - radius, pixel.y - radius, pixel.x + radius, pixel.y + radius)
-                val hit = instance.queryRenderedFeatures(rect, TRACKS)
+                val hits = instance.queryRenderedFeatures(rect, TRACKS)
                     .mapNotNull { it.getStringProperty("railId")?.toLongOrNull() }.distinct().take(12)
                 val station = instance.queryRenderedFeatures(pixel, STATIONS).firstOrNull()?.getStringProperty("station")
-                when {
-                    station != null -> stationCallback(station)
-                    hit.isNotEmpty() -> lineCallback(hit)
+                val nw = instance.projection.fromScreenLocation(PointF(rect.left, rect.top))
+                val se = instance.projection.fromScreenLocation(PointF(rect.right, rect.bottom))
+                val lng = kotlin.math.abs(se.longitude - nw.longitude) / 2
+                val lat = kotlin.math.abs(nw.latitude - se.latitude) / 2
+                val geotap = GeoPoint(location.longitude, location.latitude)
+                tapJob?.cancel()
+                tapJob = scope.launch {
+                    val geometry = if (instance.cameraPosition.zoom >= 5 && lng < 5 && lat < 5) {
+                        val nearby = RailBounds(geotap.lon - lng, geotap.lat - lat, geotap.lon + lng, geotap.lat + lat)
+                        try {
+                            val (tracks, _) = loadCallback(nearby, false)
+                            withContext(Dispatchers.Default) { nearbyRailIds(geotap, lng, lat, tracks) }
+                        } catch (error: Exception) {
+                            if (error is CancellationException) throw error
+                            emptyList()
+                        }
+                    } else emptyList()
+                    when {
+                        geometry.isNotEmpty() -> lineCallback(geometry)
+                        hits.isNotEmpty() -> lineCallback(hits)
+                        station != null -> stationCallback(station)
+                        else -> emptyTapCallback()
+                    }
                 }
-                station != null || hit.isNotEmpty()
+                true
             }
         }
         val observer = LifecycleEventObserver { _, event -> when (event) {
@@ -100,6 +142,7 @@ fun RailMap(
             disposed = true
             owner.lifecycle.removeObserver(observer)
             handle.map = null
+            tapJob?.cancel()
             view.removeOnDidFailLoadingMapListener(listener)
             if (resumed) view.onPause()
             if (started) view.onStop()
@@ -107,14 +150,18 @@ fun RailMap(
         }
     }
 
-    LaunchedEffect(map, showGsi) {
+    LaunchedEffect(map, detailStyle) {
         val instance = map ?: return@LaunchedEffect
         loadedStyle = null
-        instance.setStyle(Style.Builder().fromUri(if (showGsi) OfflineMaps.STYLE else "asset://rail-schematic.json")) { style ->
+        instance.setStyle(Style.Builder().fromUri(if (detailStyle) VECTOR_STYLE else SCHEMATIC_STYLE)) { style ->
             val empty = FeatureCollection.fromFeatures(emptyList<Feature>())
             style.addSource(GeoJsonSource("rail-local", empty))
-            style.addLayer(LineLayer(TRACKS, "rail-local").withProperties(lineColor(if (showGsi) "#0A696C" else "#86DFE0"),
-                lineWidth(3f), lineOpacity(0.92f)))
+            style.addLayer(LineLayer(TRACKS, "rail-local").withProperties(lineColor("#087F88"), lineWidth(3f), lineOpacity(0.96f)))
+            style.addLayer(LineLayer(HIGHLIGHT, "rail-local").withFilter(Expression.eq(Expression.get("railId"), ""))
+                .withProperties(lineColor("#F4B039"), lineWidth(5f)))
+            style.addSource(GeoJsonSource("ahead-local", empty))
+            style.addLayer(CircleLayer("ahead-dots", "ahead-local").withProperties(circleColor("#F4B039"),
+                circleRadius(5f), circleStrokeColor("#15252A"), circleStrokeWidth(2f)))
             style.addSource(GeoJsonSource("stations-local", empty))
             style.addLayer(CircleLayer(STATIONS, "stations-local").withProperties(circleColor("#F6E6AF"),
                 circleRadius(3f), circleStrokeColor("#263947"), circleStrokeWidth(1f)))
@@ -127,6 +174,35 @@ fun RailMap(
             val b = instance.projection.visibleRegion.latLngBounds
             viewport = Viewport(RailBounds(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth), instance.cameraPosition.zoom)
         }
+    }
+
+    LaunchedEffect(loadedStyle, base, online, regions) {
+        val style = loadedStyle ?: return@LaunchedEffect
+        style.layers.filter { it.id.startsWith(GSI_LAYER_PREFIX) }.forEach {
+            style.removeLayer(it.id)
+            style.removeSource(it.id)
+        }
+        if (base == MapBase.RAIL || detailStyle) return@LaunchedEffect
+        fun add(id: String, url: String, region: GsiRegion? = null) {
+            val tiles = TileSet("2.2.0", url).apply {
+                attribution = GSI_ATTRIBUTION
+                setMinZoom(region?.minZoom?.toFloat() ?: 4f)
+                setMaxZoom(region?.maxZoom?.toFloat() ?: 16f)
+                if (region != null) setBounds(region.west.toFloat(), region.south.toFloat(), region.east.toFloat(), region.north.toFloat())
+            }
+            style.addSource(RasterSource(id, tiles, 256))
+            style.addLayerBelow(RasterLayer(id, id).withProperties(rasterFadeDuration(0f)), TRACKS)
+        }
+        if (online) add(GSI_LAYER_PREFIX + "online", GSI_STANDARD + "{z}/{x}/{y}.png")
+        regions.forEach { add(GSI_LAYER_PREFIX + it.id, it.tileUrl, it) }
+    }
+
+    LaunchedEffect(loadedStyle, matchedLine, ahead) {
+        val style = loadedStyle ?: return@LaunchedEffect
+        style.getLayerAs<LineLayer>(HIGHLIGHT)?.setFilter(Expression.eq(Expression.get("railId"), matchedLine?.toString().orEmpty()))
+        style.getSourceAs<GeoJsonSource>("ahead-local")?.setGeoJson(FeatureCollection.fromFeatures(ahead.map {
+            Feature.fromGeometry(Point.fromLngLat(it.station.point.lon, it.station.point.lat))
+        }))
     }
 
     LaunchedEffect(loadedStyle, viewport, catalogYear) {
@@ -164,7 +240,7 @@ fun RailMap(
         val instance = map ?: return@LaunchedEffect
         if (follow && fix != null) {
             val target = LatLng(fix.latitude, fix.longitude)
-            if (instance.cameraPosition.target?.distanceTo(target)?.let { it > 100 } != false) {
+            if (instance.cameraPosition.target?.distanceTo(target)?.let { it > 15 } != false) {
                 instance.cameraPosition = CameraPosition.Builder(instance.cameraPosition).target(target).build()
             }
         }
@@ -183,5 +259,5 @@ fun RailMap(
         style.getSourceAs<GeoJsonSource>("trip")?.setGeoJson(FeatureCollection.fromFeatures(
             segments.filter { it.size >= 2 }.map { Feature.fromGeometry(LineString.fromLngLats(it)) }))
     }
-    AndroidView(factory = { view }, modifier = modifier)
+    AndroidView(factory = { view }, modifier = modifier.testTag(if (loadedStyle != null) "rail-map-ready" else "rail-map-loading"))
 }

@@ -58,6 +58,22 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 30
+      - name: Build Android instrumentation APK
+        shell: bash
+        run: |
+          export JAVA_HOME="$JRFANMAP_TOOLCHAIN_ROOT/toolchains/jdk"
+          export ANDROID_HOME="$JRFANMAP_TOOLCHAIN_ROOT/android-sdk"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          export ANDROID_USER_HOME="$JRFANMAP_TOOLCHAIN_ROOT/android-user"
+          ./gradlew :app:assembleDebugAndroidTest
+      - name: Save instrumentation APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: jrfanmap-device-test-${{ github.sha }}
+          path: app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
       - name: Save test and Lint reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -69,8 +85,57 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  publish:
+  emulator:
     needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Enable Android hardware acceleration
+        id: kvm
+        shell: bash
+        run: |
+          if [[ -c /dev/kvm ]]; then
+            sudo chown "$(id -u):$(id -g)" /dev/kvm
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Android device smoke tests skipped because this runner has no KVM.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.kvm.outputs.available == 'true'
+        with:
+          name: jrfanmap-apk-${{ github.sha }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        if: steps.kvm.outputs.available == 'true'
+        with:
+          name: jrfanmap-device-test-${{ github.sha }}
+          path: dist
+      - name: Tap through debug APK in Android emulator
+        if: steps.kvm.outputs.available == 'true'
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader -no-snapshot -noaudio -no-boot-anim
+          script: |
+            adb emu geo fix 139.7671 35.6812
+            adb install -r dist/JRFANMAP-debug.apk
+            adb install -r dist/app-debug-androidTest.apk
+            adb shell am instrument -w jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator.txt
+            cat android-emulator.txt
+            grep -E '^OK \([0-9]+ tests?\)' android-emulator.txt
+      - name: Save emulator result
+        if: always() && steps.kvm.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-${{ github.run_id }}-${{ github.run_attempt }}
+          path: android-emulator.txt
+          retention-days: 14
+
+  publish:
+    needs: [build, emulator]
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
