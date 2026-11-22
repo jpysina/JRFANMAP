@@ -30,7 +30,11 @@ class RailScreenshotTest {
         compose.onNodeWithText("站点名录").assertIsDisplayed()
         assertPanelAreaBelow(.23f)
         takeReviewScreenshot("portrait-expanded")
-        compose.onNodeWithTag("tab-0").performClick()
+        compose.onNodeWithText("国土交通省数据来源 ↗").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun captureLiveForReview() {
+        compose.onNodeWithTag("live-page").assertIsDisplayed()
         compose.onNodeWithText("全屏").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() }
         takeReviewScreenshot("portrait-live")

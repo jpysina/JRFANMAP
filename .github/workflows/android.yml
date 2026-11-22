@@ -89,6 +89,30 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: smoke
+            tests: jp.jrfanmap.AppSmokeTest
+            count: 6 tests
+            rotation: 0
+            snapshots: ''
+          - profile: portrait
+            tests: jp.jrfanmap.RailScreenshotTest#capturePortraitForReview
+            count: 1 test
+            rotation: 0
+            snapshots: portrait-collapsed portrait-expanded
+          - profile: landscape
+            tests: jp.jrfanmap.RailScreenshotTest#captureLandscapeForReview
+            count: 1 test
+            rotation: 1
+            snapshots: landscape-expanded
+          - profile: live
+            tests: jp.jrfanmap.RailScreenshotTest#captureLiveForReview
+            count: 1 test
+            rotation: 0
+            snapshots: portrait-live
     steps:
       - name: Enable Android hardware acceleration
         id: kvm
@@ -123,25 +147,17 @@ jobs:
             adb emu geo fix 121.4737 31.2304
             adb install -r dist/JRFANMAP-debug.apk
             adb install -r dist/app-debug-androidTest.apk
-            adb shell wm size 900x1920
-            adb shell wm density 360
-            adb shell wm fixed-to-user-rotation enabled
-            adb shell wm user-rotation lock 0
-            timeout 120 adb shell am instrument -w -e class jp.jrfanmap.AppSmokeTest jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator.txt
-            cat android-emulator.txt
+            if [ '${{ matrix.profile }}' != smoke ]; then adb shell wm size 900x1920 && adb shell wm density 360 && adb shell wm fixed-to-user-rotation enabled && adb shell wm user-rotation lock ${{ matrix.rotation }}; fi
             mkdir -p ui-screenshots
-            timeout 120 adb shell am instrument -w -e class jp.jrfanmap.RailScreenshotTest#capturePortraitForReview jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator-portrait.txt
-            cat android-emulator-portrait.txt
-            adb shell wm user-rotation lock 1
-            timeout 120 adb shell am instrument -w -e class jp.jrfanmap.RailScreenshotTest#captureLandscapeForReview jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator-landscape.txt
-            cat android-emulator-landscape.txt
-            for snapshot in portrait-collapsed portrait-expanded portrait-live landscape-expanded; do adb exec-out run-as jp.jrfanmap cat "files/ui-screenshots/$snapshot.png" > "ui-screenshots/$snapshot.png"; file "ui-screenshots/$snapshot.png" | grep 'PNG image data' || exit 1; done
-            grep -E '^OK \(6 tests\)' android-emulator.txt && grep -E '^OK \(1 test\)' android-emulator-portrait.txt && grep -E '^OK \(1 test\)' android-emulator-landscape.txt
+            timeout 120 adb shell am instrument -w -e class '${{ matrix.tests }}' jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator.txt
+            cat android-emulator.txt
+            for snapshot in ${{ matrix.snapshots }}; do adb exec-out run-as jp.jrfanmap cat "files/ui-screenshots/$snapshot.png" > "ui-screenshots/$snapshot.png"; file "ui-screenshots/$snapshot.png" | grep 'PNG image data' || exit 1; done
+            grep -Fx 'OK (${{ matrix.count }})' android-emulator.txt
       - name: Save emulator result
         if: always() && steps.kvm.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: android-emulator-${{ github.run_id }}-${{ github.run_attempt }}
+          name: android-emulator-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.profile }}
           path: |
             android-emulator*.txt
             ui-screenshots/*.png
