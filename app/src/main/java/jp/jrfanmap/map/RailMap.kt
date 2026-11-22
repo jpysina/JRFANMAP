@@ -11,6 +11,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import jp.jrfanmap.RailApplication
 import jp.jrfanmap.data.Fix
 import jp.jrfanmap.rail.*
 import kotlinx.coroutines.*
@@ -55,11 +56,17 @@ fun RailMap(
     loadRail: suspend (RailBounds, Boolean) -> Pair<List<RailSection>, List<RailStation>>,
     onLines: (List<Long>) -> Unit, onStation: (String) -> Unit,
     modifier: Modifier = Modifier, matchedLine: Long? = null, ahead: List<AheadStation> = emptyList(),
-    onGesture: () -> Unit = {}, onEmptyTap: () -> Unit = {}, onError: (String) -> Unit
+    onGesture: () -> Unit = {}, onEmptyTap: () -> Unit = {},
+    onShinjukuPreview: (Boolean) -> Unit = {}, onError: (String) -> Unit
 ) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val boundary = remember(context) { (context.applicationContext as RailApplication).store.japanBoundary }
+    val location = fix?.let { GeoPoint(it.longitude, it.latitude) }
+    val anchor = remember(location, boundary) { boundary.anchor(location) }
+    val latestAnchor by rememberUpdatedState(anchor)
+    val previewCallback by rememberUpdatedState(onShinjukuPreview)
     val gestureCallback by rememberUpdatedState(onGesture)
     val emptyTapCallback by rememberUpdatedState(onEmptyTap)
     var tapJob by remember { mutableStateOf<Job?>(null) }
@@ -67,11 +74,14 @@ fun RailMap(
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var loadedStyle by remember { mutableStateOf<Style?>(null) }
     var viewport by remember { mutableStateOf<Viewport?>(null) }
+    var showingShinjuku by remember { mutableStateOf(false) }
+    var lastJapanCenter by remember { mutableStateOf<GeoPoint?>(null) }
     val errorCallback by rememberUpdatedState(onError)
     val lineCallback by rememberUpdatedState(onLines)
     val stationCallback by rememberUpdatedState(onStation)
     val loadCallback by rememberUpdatedState(loadRail)
     val detailStyle = base == MapBase.VECTOR && online
+    LaunchedEffect(showingShinjuku) { previewCallback(showingShinjuku) }
     DisposableEffect(view, owner) {
         var disposed = false
         var started = false
@@ -86,15 +96,22 @@ fun RailMap(
             instance.uiSettings.isAttributionEnabled = true
             instance.uiSettings.isRotateGesturesEnabled = false
             instance.uiSettings.isTiltGesturesEnabled = false
+            val start = latestAnchor
+            showingShinjuku = start.shinjukuPreview
+            lastJapanCenter = start.center.takeUnless { start.shinjukuPreview }
             instance.cameraPosition = CameraPosition.Builder()
-                .target(fix?.let { LatLng(it.latitude, it.longitude) } ?: LatLng(35.6812, 139.7671)).zoom(10.0).build()
+                .target(LatLng(start.center.lat, start.center.lon))
+                .zoom(if (start.shinjukuPreview) SHINJUKU_ZOOM else JAPAN_FIX_ZOOM).build()
             instance.addOnCameraIdleListener {
                 val b = instance.projection.visibleRegion.latLngBounds
                 viewport = Viewport(RailBounds(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth),
                     instance.cameraPosition.zoom)
             }
             instance.addOnCameraMoveStartedListener { reason ->
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) gestureCallback()
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
+                    showingShinjuku = false
+                    gestureCallback()
+                }
             }
             instance.addOnMapClickListener { location ->
                 val pixel = instance.projection.toScreenLocation(location)
@@ -237,17 +254,25 @@ fun RailMap(
             }
         }
     }
-    LaunchedEffect(loadedStyle, fix, follow) {
+    LaunchedEffect(loadedStyle, fix) {
         val style = loadedStyle ?: return@LaunchedEffect
         val feature = fix?.let { Feature.fromGeometry(Point.fromLngLat(it.longitude, it.latitude)) }
         style.getSourceAs<GeoJsonSource>("device")?.setGeoJson(FeatureCollection.fromFeatures(listOfNotNull(feature)))
+    }
+    LaunchedEffect(map, location, anchor, follow) {
         val instance = map ?: return@LaunchedEffect
-        if (follow && fix != null) {
-            val target = LatLng(fix.latitude, fix.longitude)
-            if (instance.cameraPosition.target?.distanceTo(target)?.let { it > 15 } != false) {
-                instance.cameraPosition = CameraPosition.Builder(instance.cameraPosition).target(target).build()
-            }
+        if (location != null) lastJapanCenter = anchor.center.takeUnless { anchor.shinjukuPreview }
+        // Wait at the last Japanese map position through a tunnel or a stale fix.
+        val target = if (location == null) lastJapanCenter?.let { MapAnchor(it, false) } ?: anchor else anchor
+        if (!follow && !(showingShinjuku && !target.shinjukuPreview)) return@LaunchedEffect
+        val point = LatLng(target.center.lat, target.center.lon)
+        val enteringPreview = target.shinjukuPreview && !showingShinjuku
+        if (enteringPreview || instance.cameraPosition.target?.distanceTo(point)?.let { it > 15 } != false) {
+            val camera = CameraPosition.Builder(instance.cameraPosition).target(point)
+            if (enteringPreview) camera.zoom(SHINJUKU_ZOOM)
+            instance.cameraPosition = camera.build()
         }
+        showingShinjuku = target.shinjukuPreview
     }
     LaunchedEffect(loadedStyle, path) {
         val style = loadedStyle ?: return@LaunchedEffect

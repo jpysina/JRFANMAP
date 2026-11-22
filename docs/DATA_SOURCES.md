@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | 铁路几何、线路、运营方和日文站名 | [国土交通省「国土数値情報（鉄道データ）」2025 年度版](https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N02-2025.html) | 全国旅客铁路及轨道，基准日 2025-12-31。 |
 | 内置日本概略底图 | [Natural Earth 1:50m Admin 0 Countries](https://github.com/nvkelso/natural-earth-vector/blob/master/geojson/ne_50m_admin_0_countries.geojson) | 日本概略边界，Public Domain。 |
+| 判断地图默认视角 | [Natural Earth 1:10m Admin 0 Countries](https://github.com/nvkelso/natural-earth-vector/blob/master/geojson/ne_10m_admin_0_countries.geojson) | 提取日本多边形，在本机判断地图是否从新宿駅开始浏览，Public Domain。 |
 | 详细底图和离线下载 | [地理院タイル（標準地図）](https://maps.gsi.go.jp/development/ichiran.html) | 公共 256×256 PNG 瓦片，应用在缩放 4–16 范围内下载小区域。 |
 | 可选矢量底图 | [国土地理院ベクトルタイル提供実験](https://github.com/gsi-cyberjapan/gsimaps-vector-experiment) | 联网时可切换到实验矢量图。 |
 | 铁路公告 | [JR 东日本运行信息](https://traininfo.jreast.co.jp/train_info/kanto.aspx)等运营方官方网页 | 由各公司公开发布，应用提供直达链接。 |
@@ -13,6 +14,8 @@
 由官方 UTF-8 GeoJSON 提取线路坐标与运营分类，将站点线形转为中心点，保留原始日文名称。基于资料整理的线路科普为应用自写摘要，详情页附来源。应用内置的压缩种子可用 `python3 scripts/prepare-rail-seed.py` 重建，脚本验证对应下载的 SHA-256。首次启动导入本机独立 SQLite 库。数据页从官方清单发现新版，校验压缩包结构与涵盖数量，在事务中替换数据。行程库和公告快照与铁路库分开。几何推断使用坐标近似，站点及轨道与实际运行服务可能存在差异。
 
 Natural Earth 概略底图仅取日本要素。离线标准地图分区域保存在设备上，保存前验证每块图片，完整下载后再显示。矢量实验服务的接口和内容可能变化。国土地理院底图保留出处。[Natural Earth 使用条款](https://www.naturalearthdata.com/about/terms-of-use/) · [国土地理院使用条款](https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html)
+
+新宿駅的浏览中心采用国土交通省数据中 JR 東日本中央線的新宿站点中心。线路资料的地图浮层布局参考 [OpenRailwayMap](https://github.com/OpenRailwayMap/OpenRailwayMap) 和 [Mini Tokyo 3D](https://github.com/nagix/mini-tokyo-3d) 的开源界面。
 
 ## 运营信息调研
 

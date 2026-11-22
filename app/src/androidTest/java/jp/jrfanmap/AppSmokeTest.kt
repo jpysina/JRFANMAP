@@ -8,6 +8,8 @@ import jp.jrfanmap.rail.RailBounds
 import jp.jrfanmap.RailApplication
 import androidx.test.rule.GrantPermissionRule
 import android.Manifest
+import android.os.SystemClock
+import androidx.compose.ui.geometry.Offset
 import jp.jrfanmap.data.TripDatabase
 import jp.jrfanmap.map.DownloadArea
 import org.maplibre.android.geometry.LatLngBounds
@@ -38,21 +40,36 @@ class AppSmokeTest {
         }
     }
 
-    @Test fun tappingTokyoRailOpensOfflineLineDetails() {
-        val catalog = (compose.activity.application as RailApplication).store.catalog
-        assertTrue(catalog.prepare().lines > 500)
+    @Test fun foreignFixKeepsItsCoordinatesAndOpensRailDetailsAtShinjuku() {
+        val store = (compose.activity.application as RailApplication).store
+        assertTrue(store.catalog.prepare().lines > 500)
+        val shanghai = Fix(31.2304, 121.4737, null, null, null, null, 10f, null,
+            "gps", System.currentTimeMillis(), SystemClock.elapsedRealtimeNanos())
+        compose.runOnIdle { store.update { it.copy(active = true, fix = shanghai) } }
         compose.onNodeWithTag("tab-2").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("map-preview-shinjuku").assertIsDisplayed()
+        assertEquals(shanghai.longitude, store.telemetry.value.fix!!.longitude, 0.001)
         compose.onNodeWithTag("rail-map-ready").performTouchInput { click(center) }
-        compose.waitUntil(15_000) {
-            compose.onAllNodesWithText("站点名录").fetchSemanticsNodes().isNotEmpty() ||
-                compose.onAllNodesWithTag("rail-choice").fetchSemanticsNodes().isNotEmpty()
-        }
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-info-expand").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("rail-info-panel").assertIsDisplayed()
+        val collapsed = compose.onNodeWithTag("rail-info-panel").fetchSemanticsNode().boundsInRoot
+        val canvas = compose.onNodeWithTag("rail-map-ready").fetchSemanticsNode().boundsInRoot
+        assertTrue("The preview leaves map visible", collapsed.height < canvas.height * 0.45f)
         val choices = compose.onAllNodesWithTag("rail-choice")
-        if (choices.fetchSemanticsNodes().isNotEmpty()) choices.onFirst().performClick()
-        compose.waitUntil(15_000) { compose.onAllNodesWithText("站点名录").fetchSemanticsNodes().isNotEmpty() }
+        if (choices.fetchSemanticsNodes().isNotEmpty()) {
+            choices.onFirst().performScrollTo().performClick()
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-info-expand").fetchSemanticsNodes().isNotEmpty() }
+        }
+        compose.onNodeWithTag("rail-info-expand").performClick()
         compose.onNodeWithText("站点名录").assertExists()
-        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithTag("rail-map-ready").performTouchInput {
+            swipe(Offset(width * .75f, height * .29f), Offset(width * .30f, height * .29f))
+        }
+        compose.onNodeWithTag("map-preview-shinjuku").assertDoesNotExist()
+        compose.onNodeWithTag("rail-info-panel").assertIsDisplayed()
+        compose.onNodeWithTag("rail-info-close").performClick()
+        compose.onNodeWithTag("rail-info-panel").assertDoesNotExist()
         compose.onNodeWithText("下载标准地图").performClick()
         compose.onNodeWithText("下载地理院标准地图").assertIsDisplayed()
         compose.onNodeWithText("取消").performClick()

@@ -32,7 +32,11 @@ import jp.jrfanmap.data.*
 import jp.jrfanmap.map.*
 import jp.jrfanmap.rail.*
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextOverflow
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.*
@@ -114,6 +118,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     var error by remember { mutableStateOf("") }
     var selectedIds by remember { mutableStateOf<List<Long>>(emptyList()) }
     var stationName by remember { mutableStateOf<String?>(null) }
+    var preview by remember { mutableStateOf(false) }
     val handle = remember { MapHandle() }
     val offline by model.offline.state.collectAsStateWithLifecycle()
 
@@ -121,7 +126,8 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
         val wide = maxWidth > maxHeight && maxWidth >= 490.dp
         val overlayHeight = if (wide) maxHeight - 70.dp else maxHeight * .40f
         RailMap(fix, t.path, follow, handle, MapBase.STANDARD, t.network, offline.regions, catalog.info?.year ?: 0,
-            model::visibleRail, onLines = { selectedIds = it }, onStation = { stationName = it },
+            model::visibleRail, onLines = { stationName = null; selectedIds = it }, onStation = { selectedIds = emptyList(); stationName = it },
+            onShinjukuPreview = { preview = it }, onEmptyTap = { selectedIds = emptyList(); stationName = null },
             modifier = Modifier.fillMaxSize(), matchedLine = line?.id, ahead = ahead,
             onGesture = { follow = false }, onError = { error = it })
 
@@ -145,7 +151,8 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
             }
         }
 
-        Column(Modifier.align(Alignment.BottomStart).padding(start = 12.dp, end = 12.dp, bottom = 28.dp)
+        if (preview) PreviewCaption(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 66.dp))
+        if (wide || (selectedIds.isEmpty() && stationName == null)) Column(Modifier.align(Alignment.BottomStart).padding(start = 12.dp, end = 12.dp, bottom = 28.dp)
             .then(if (wide) Modifier.width((maxWidth * .40f).coerceAtMost(345.dp)) else Modifier.fillMaxWidth())
             .heightIn(max = overlayHeight.coerceAtLeast(100.dp)).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -215,8 +222,8 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
         Surface(Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 5.dp), color = Ink.copy(alpha = .9f), shape = Cut) {
             Text("国土交通省・国土地理院", Modifier.padding(horizontal = 6.dp, vertical = 2.dp), color = Color.White, fontSize = 10.sp)
         }
+        RailSelection(model, selectedIds, stationName) { selectedIds = emptyList(); stationName = null }
     }
-    RailSelection(model, selectedIds, stationName, { selectedIds = emptyList() }, { stationName = null })
 }
 
 @Composable private fun GpsPage(t: Telemetry, now: Long, fresh: Boolean, onPermission: () -> Unit) {
@@ -333,6 +340,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     var error by remember { mutableStateOf("") }
     var selectedIds by remember { mutableStateOf<List<Long>>(emptyList()) }
     var stationName by remember { mutableStateOf<String?>(null) }
+    var preview by remember { mutableStateOf(false) }
     var area by remember { mutableStateOf<DownloadArea?>(null) }
     val handle = remember { MapHandle() }
     val offline by model.offline.state.collectAsStateWithLifecycle()
@@ -360,12 +368,20 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
                 }
             }
         }
-        RailMap(telemetry.fix.takeIf { fresh }, telemetry.path, follow, handle, base, telemetry.network,
-            offline.regions, catalog.info?.year ?: 0, model::visibleRail,
-            onLines = { ids -> selectedIds = ids; error = "" }, onStation = { stationName = it; error = "" },
-            modifier = Modifier.weight(1f).fillMaxWidth(), onGesture = { follow = false }, onEmptyTap = {
-                error = if (catalog.busy) "铁路库正在准备" else "附近未命中铁路，请放大后点蓝绿色线路"
-            }, onError = { error = it })
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            RailMap(telemetry.fix.takeIf { fresh }, telemetry.path, follow, handle, base, telemetry.network,
+                offline.regions, catalog.info?.year ?: 0, model::visibleRail,
+                onLines = { ids -> stationName = null; selectedIds = ids; error = "" },
+                onStation = { selectedIds = emptyList(); stationName = it; error = "" }, onShinjukuPreview = { preview = it },
+                modifier = Modifier.fillMaxSize(), onGesture = { follow = false }, onEmptyTap = {
+                    error = if (selectedIds.isNotEmpty() || stationName != null) ""
+                        else if (catalog.busy) "铁路库正在准备" else "附近未命中铁路，请放大后点蓝绿色线路"
+                    selectedIds = emptyList()
+                    stationName = null
+                }, onError = { error = it })
+            if (preview) PreviewCaption(Modifier.align(Alignment.TopStart).padding(8.dp))
+            RailSelection(model, selectedIds, stationName) { selectedIds = emptyList(); stationName = null }
+        }
         if (error.isNotBlank()) Text(error, color = Amber, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 10.dp))
         Text("点蓝绿色线路查看资料 · $CATALOG_CREDIT", color = Muted, fontSize = 10.sp, modifier = Modifier.padding(7.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -379,7 +395,6 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
             }) { Text(if (offline.busy) "取消下载" else "下载标准地图") }
         }
     }
-    RailSelection(model, selectedIds, stationName, { selectedIds = emptyList() }, { stationName = null })
     area?.let { selection ->
         val fits = selection.tiles in 1..TileBudget.LIMIT
         val zooms = "缩放 ${selection.minZoom}–${selection.maxZoom}"
@@ -392,73 +407,166 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     }
 }
 
-@Composable private fun RailSelection(model: RailViewModel, selectedIds: List<Long>, stationName: String?,
-                                      closeLines: () -> Unit, closeStation: () -> Unit) {
-    var line by remember(selectedIds) { mutableStateOf<RailNetwork?>(null) }
-    var alternatives by remember(selectedIds) { mutableStateOf<List<RailLine>?>(null) }
-    var loading by remember(selectedIds) { mutableStateOf(selectedIds.isNotEmpty()) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(selectedIds) {
-        if (selectedIds.isEmpty()) return@LaunchedEffect
-        val results = runCatching { model.lines(selectedIds) }.getOrElse {
-            if (it is kotlinx.coroutines.CancellationException) throw it
-            emptyList()
-        }
-        if (results.size == 1) line = runCatching { model.line(results.first().id) }.getOrNull()
-        else alternatives = results
-        loading = false
-    }
-    if (selectedIds.isNotEmpty() && line == null) {
-        val choices = alternatives
-        AlertDialog(onDismissRequest = closeLines, title = { Text(if (loading) "读取线路资料" else if (choices.isNullOrEmpty()) "线路资料不可用" else "选择线路") },
-            text = {
-                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                else if (choices.isNullOrEmpty()) Text("请等待铁路数据库就绪后重试。")
-                else Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
-                    choices.forEach { candidate ->
-                        TextButton(onClick = {
-                            loading = true
-                            scope.launch {
-                                line = runCatching { model.line(candidate.id) }.getOrNull()
-                                loading = false
-                            }
-                        }, modifier = Modifier.testTag("rail-choice")) { Text("${candidate.name} · ${candidate.operator}") }
-                    }
-                }
-            }, confirmButton = { TextButton(onClick = closeLines) { Text("关闭") } })
-    }
-    line?.let { info -> LineDetails(info, closeLines) }
-    stationName?.let { name ->
-        AlertDialog(onDismissRequest = closeStation, title = { Text(name) }, text = { Text("日文原站名 · 国土数値情報") },
-            confirmButton = { TextButton(onClick = closeStation) { Text("关闭") } })
+@Composable private fun PreviewCaption(modifier: Modifier) {
+    Surface(modifier.testTag("map-preview-shinjuku"), color = Ink.copy(alpha = .88f), shape = Cut) {
+        Text("新宿駅 · 默认浏览", Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            color = Color.White, fontSize = 12.sp)
     }
 }
 
-@Composable private fun LineDetails(network: RailNetwork, close: () -> Unit) {
-    val context = LocalContext.current
-    val fact = network.line.fact()
-    val official = operatorPages.firstOrNull { it.operator == network.line.operator }
-    val stations = remember(network) { network.stations.map { it.name }.distinct().sorted() }
-    val kilometers = remember(network) {
-        network.sections.sumOf { section -> section.shape.zipWithNext().sumOf { (a, b) ->
-            hypot((a.lat - b.lat) * 111.195, (a.lon - b.lon) * 111.195 * cos(Math.toRadians((a.lat + b.lat) / 2)))
-        } }
+@Composable private fun RailSelection(model: RailViewModel, selectedIds: List<Long>, stationName: String?, close: () -> Unit) {
+    if (selectedIds.isEmpty() && stationName == null) return
+    var choices by remember(selectedIds) { mutableStateOf<List<RailLine>?>(null) }
+    var picked by remember(selectedIds) { mutableStateOf<Long?>(null) }
+    var line by remember(picked, selectedIds) { mutableStateOf<RailNetwork?>(null) }
+    var unavailable by remember(selectedIds, picked) { mutableStateOf(false) }
+    var expanded by remember(selectedIds, picked, stationName) { mutableStateOf(false) }
+    LaunchedEffect(selectedIds) {
+        if (selectedIds.isEmpty()) return@LaunchedEffect
+        try {
+            val results = model.lines(selectedIds)
+            choices = results
+            picked = results.singleOrNull()?.id
+            unavailable = results.isEmpty()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { unavailable = true }
     }
-    AlertDialog(onDismissRequest = close, title = { Text(network.line.name) }, text = {
-        Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("${network.line.operator} · ${network.line.categoryLabel()}")
-            Text("${stations.size} 个不同站名 · 线形总长约 ${kilometers.fmt()} km")
-            Text("线形总长包含数据中的支线及重复轨道时可能与营业里程不同。")
-            fact?.let {
-                Text(it.text)
-                TextButton(onClick = { open(context, it.source) }) { Text("查看科普来源 ↗") }
-            }
-            official?.let { TextButton(onClick = { open(context, it.url) }) { Text("${it.title} 运行信息 ↗") } }
-            Text("站点名录", style = MaterialTheme.typography.titleSmall)
-            Text(stations.joinToString(" · ").ifBlank { "本版资料未收录车站" })
-            Text(CATALOG_CREDIT, color = Muted, fontSize = 10.sp)
+    LaunchedEffect(picked) {
+        val id = picked ?: return@LaunchedEffect
+        try {
+            line = model.line(id)
+            unavailable = line == null
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { unavailable = true }
+    }
+    BackHandler { if (expanded) expanded = false else close() }
+    val network = line
+    val candidates = choices.orEmpty()
+    val isChoice = picked == null && candidates.size > 1
+    val title = stationName ?: network?.line?.name ?: when {
+        unavailable -> "线路资料不可用"
+        isChoice -> "选择线路"
+        else -> "读取线路资料"
+    }
+    val kind = when {
+        stationName != null -> "车站"
+        isChoice -> "${candidates.size} 条候选线路"
+        network != null -> network.line.categoryLabel()
+        else -> "线路资料"
+    }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth >= 480.dp && maxWidth > maxHeight
+        val width = if (wide) (maxWidth * .46f).coerceAtMost(350.dp) else maxWidth - 20.dp
+        val height = maxHeight * when {
+            wide && expanded -> .83f
+            wide -> .62f
+            expanded -> .45f
+            else -> .32f
         }
-    }, confirmButton = { TextButton(onClick = close) { Text("关闭") } })
+        Surface(Modifier.align(if (wide) Alignment.BottomEnd else Alignment.BottomCenter)
+            .padding(end = if (wide) 10.dp else 0.dp, bottom = 24.dp)
+            .width(width).then(if (!wide && !expanded && network != null)
+                Modifier.height((maxHeight * .28f).coerceAtMost(204.dp)) else Modifier.heightIn(max = height))
+            .testTag("rail-info-panel")
+            .semantics { paneTitle = "铁路资料" },
+            color = Panel.copy(alpha = .88f), shape = Cut, shadowElevation = 4.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, Grid.copy(alpha = .9f))) {
+            Column(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(4.dp, 26.dp).background(Mint))
+                    Column(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp)) {
+                        Text(kind, fontSize = 11.sp, lineHeight = 14.sp, color = Mint, fontWeight = FontWeight.Bold)
+                        Text(title, Modifier.semantics { heading() }, fontSize = 18.sp, lineHeight = 22.sp,
+                            maxLines = if (expanded) 2 else 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+                    }
+                    if (network != null || stationName != null || isChoice) {
+                        TextButton(onClick = { expanded = !expanded },
+                            modifier = Modifier.testTag("rail-info-expand").semantics { stateDescription = if (expanded) "已展开" else "已收起" },
+                            contentPadding = PaddingValues(horizontal = 4.dp)) { Text(if (expanded) "收起" else "展开") }
+                    }
+                    TextButton(onClick = close, modifier = Modifier.testTag("rail-info-close"),
+                        contentPadding = PaddingValues(horizontal = 4.dp)) { Text("关闭", color = Muted) }
+                }
+                HorizontalDivider(color = Grid)
+                key(title, expanded) {
+                    Column(Modifier.verticalScroll(rememberScrollState()).fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        when {
+                            stationName != null -> {
+                                Text("日文原站名 · 国土数値情報", color = Muted, fontSize = 13.sp)
+                                if (expanded) RailSource()
+                            }
+                            network != null -> {
+                                LineDetails(network, expanded)
+                                if (candidates.size > 1) TextButton(onClick = { picked = null }) { Text("查看其他候选线路") }
+                            }
+                            isChoice -> {
+                                candidates.groupBy { it.operator }.forEach { (operator, lines) ->
+                                    Text(operator, color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    lines.forEach { candidate ->
+                                        Row(Modifier.fillMaxWidth().testTag("rail-choice")
+                                            .clickable(role = androidx.compose.ui.semantics.Role.Button) { picked = candidate.id }
+                                            .heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Text(candidate.name, Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                                            Text(candidate.categoryLabel(), color = Mint, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                            unavailable -> Text("请等待铁路数据库就绪后重试。", color = Muted)
+                            else -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun LineDetails(network: RailNetwork, expanded: Boolean) {
+    val context = LocalContext.current
+    val stations = remember(network) { network.stations.map { it.name }.distinct().sorted() }
+    val kilometers by produceState<Double?>(null, network) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            network.sections.sumOf { section -> section.shape.zipWithNext().sumOf { (a, b) ->
+                hypot((a.lat - b.lat) * 111.195, (a.lon - b.lon) * 111.195 * cos(Math.toRadians((a.lat + b.lat) / 2)))
+            } }
+        }
+    }
+    Text(network.line.operator, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.weight(.9f)) {
+            Text("不同站名", color = Muted, fontSize = 12.sp, lineHeight = 16.sp)
+            Text(stations.size.toString(), fontFamily = Mono, color = Mint, fontWeight = FontWeight.Bold)
+        }
+        Column(Modifier.weight(1.3f)) {
+            Text("线形总长 · 约", color = Muted, fontSize = 12.sp, lineHeight = 16.sp)
+            Text(kilometers?.let { "${it.fmt()} km" } ?: "—", fontFamily = Mono, color = Ink, fontWeight = FontWeight.Bold)
+        }
+    }
+    if (!expanded) return
+    Text("线形总长含支线及数据中的重复轨道。", color = Muted, fontSize = 12.sp)
+    operatorPages.firstOrNull { it.operator == network.line.operator }?.let { page ->
+        TextButton(onClick = { open(context, page.url) }) { Text("${page.title} 官方运行信息 ↗") }
+    }
+    HorizontalDivider(color = Grid)
+    Text("站点名录", Modifier.semantics { heading() }, fontWeight = FontWeight.Bold)
+    Text("按站名排序", color = Muted, fontSize = 12.sp)
+    Text(stations.joinToString(" · ").ifBlank { "本版资料未收录车站" }, fontSize = 14.sp, lineHeight = 21.sp)
+    network.line.fact()?.let { fact ->
+        HorizontalDivider(color = Grid)
+        Text("线路科普", Modifier.semantics { heading() }, fontWeight = FontWeight.Bold)
+        Text(fact.text, fontSize = 14.sp)
+        TextButton(onClick = { open(context, fact.source) }) { Text("查看科普来源 ↗") }
+    }
+    HorizontalDivider(color = Grid)
+    RailSource()
+}
+
+@Composable private fun RailSource() {
+    val context = LocalContext.current
+    Text(CATALOG_CREDIT, color = Muted, fontSize = 12.sp)
+    TextButton(onClick = { open(context, CATALOG_SOURCE) }) { Text("国土交通省数据来源 ↗") }
 }
 
 @Composable private fun DataPage(model: RailViewModel, catalog: CatalogState, keep: Boolean, onKeep: (Boolean) -> Unit) {
