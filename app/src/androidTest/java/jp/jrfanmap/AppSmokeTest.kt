@@ -54,16 +54,19 @@ class AppSmokeTest {
         compose.onNodeWithTag("rail-map-ready").performTouchInput { click(center) }
         compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-info-expand").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("rail-info-panel").assertIsDisplayed()
-        val collapsed = compose.onNodeWithTag("rail-info-panel").fetchSemanticsNode().boundsInRoot
         val canvas = compose.onNodeWithTag("rail-map-ready").fetchSemanticsNode().boundsInRoot
-        assertTrue("The preview leaves map visible", collapsed.height < canvas.height * 0.45f)
+        assertEquals(compose.onNodeWithTag("map-page").fetchSemanticsNode().boundsInRoot, canvas)
         val choices = compose.onAllNodesWithTag("rail-choice")
         if (choices.fetchSemanticsNodes().isNotEmpty()) {
             choices.onFirst().performScrollTo().performClick()
             compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-info-expand").fetchSemanticsNodes().isNotEmpty() }
         }
+        val collapsed = compose.onNodeWithTag("rail-info-panel").fetchSemanticsNode().boundsInRoot
+        assertTrue("The rail summary stays compact", collapsed.height < canvas.height * .14f)
         compose.onNodeWithTag("rail-info-expand").performClick()
-        compose.onNodeWithText("站点名录").assertExists()
+        compose.onNodeWithText("站点名录").assertIsDisplayed()
+        val expanded = compose.onNodeWithTag("rail-info-panel").fetchSemanticsNode().boundsInRoot
+        assertTrue("The rail details leave most of the map visible", expanded.height <= canvas.height * .31f)
         val mapBounds = compose.onNodeWithTag("rail-map-ready").fetchSemanticsNode().boundsInWindow
         val startX = (mapBounds.left + mapBounds.width * .75f).toInt()
         val endX = (mapBounds.left + mapBounds.width * .30f).toInt()
@@ -76,6 +79,7 @@ class AppSmokeTest {
         compose.onNodeWithTag("rail-info-panel").assertIsDisplayed()
         compose.onNodeWithTag("rail-info-close").performClick()
         compose.onNodeWithTag("rail-info-panel").assertDoesNotExist()
+        compose.onNodeWithTag("map-controls").performClick()
         compose.onNodeWithText("下载标准地图").performClick()
         compose.onNodeWithText("下载地理院标准地图").assertIsDisplayed()
         compose.onNodeWithText("取消").performClick()

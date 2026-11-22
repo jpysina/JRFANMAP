@@ -88,18 +88,18 @@ internal fun InstrumentNav(selected: Int, side: Boolean, select: (Int) -> Unit) 
         Column(modifier.clip(RoundedCornerShape(8.dp))
             .background(if (active) Ink else Panel)
             .selectable(active, role = Role.Tab, onClick = { select(index) }).testTag("tab-$index")
-            .padding(vertical = 3.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+            .padding(vertical = 2.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
             InstrumentIcon(index, if (active) Signal else Muted)
             Text(labels[index], color = if (active) Color.White else Muted, fontWeight = FontWeight.SemiBold,
                 fontSize = 12.sp, lineHeight = 16.sp)
         }
     }
-    if (side) Column(Modifier.fillMaxHeight().width(70.dp).background(Panel).padding(5.dp),
+    if (side) Column(Modifier.fillMaxHeight().width(56.dp).background(Panel).padding(4.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)) {
-        labels.indices.forEach { entry(it, Modifier.weight(1f, fill = false).fillMaxWidth().height(58.dp)) }
-    } else Row(Modifier.fillMaxWidth().background(Panel).navigationBarsPadding().padding(6.dp),
+        labels.indices.forEach { entry(it, Modifier.weight(1f, fill = false).fillMaxWidth().height(48.dp)) }
+    } else Row(Modifier.fillMaxWidth().background(Panel).navigationBarsPadding().padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        labels.indices.forEach { entry(it, Modifier.weight(1f).height(52.dp)) }
+        labels.indices.forEach { entry(it, Modifier.weight(1f).height(48.dp)) }
     }
 }
 
