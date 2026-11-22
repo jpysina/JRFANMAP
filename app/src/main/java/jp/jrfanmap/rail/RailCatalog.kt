@@ -50,7 +50,8 @@ class RailCatalog(private val context: Context) : SQLiteOpenHelper(context, "rai
     fun prepare(): CatalogInfo {
         info().takeIf { it.year > 0 }?.let { return it }
         replace(BUNDLED_YEAR) { insert ->
-            GZIPInputStream(context.assets.open("rail-2025.tsv.gz")).bufferedReader().useLines { rows ->
+            // AAPT treats a .gz suffix as a precompressed asset and strips it at packaging time.
+            GZIPInputStream(context.assets.open("rail-2025.seed")).bufferedReader().useLines { rows ->
                 rows.forEach { row ->
                     val fields = row.split('\t', limit = 5)
                     insert(fields[0], fields[1], fields[2], fields[3], decodeShape(fields[4]))

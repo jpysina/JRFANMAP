@@ -35,7 +35,13 @@ class TripDatabase(context: Context) : SQLiteOpenHelper(context, "trips.db", nul
         output.bufferedWriter().use { w ->
             w.appendLine("timestamp_utc_ms,latitude,longitude,altitude_wgs84_m,speed_mps,accuracy_m,bearing_deg,provider,mock")
             readableDatabase.rawQuery("SELECT time,lat,lon,altitude,speed,accuracy,bearing,provider,mock FROM fixes WHERE trip=? ORDER BY time,id", arrayOf(id.toString())).use { c ->
-                while (c.moveToNext()) w.appendLine((0..8).joinToString(",") { if (c.isNull(it)) "" else c.getString(it) })
+                while (c.moveToNext()) w.appendLine((0..8).joinToString(",") { column ->
+                    if (c.isNull(column)) "" else when (column) {
+                        0, 8 -> c.getLong(column).toString()
+                        7 -> c.getString(column)
+                        else -> c.getDouble(column).toString()
+                    }
+                })
             }
         }
     }

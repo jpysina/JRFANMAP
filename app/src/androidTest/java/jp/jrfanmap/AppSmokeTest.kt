@@ -50,6 +50,7 @@ class AppSmokeTest {
         }
         val choices = compose.onAllNodesWithTag("rail-choice")
         if (choices.fetchSemanticsNodes().isNotEmpty()) choices.onFirst().performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithText("站点名录").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("站点名录").assertExists()
         compose.onNodeWithText("关闭").performClick()
         compose.onNodeWithText("下载标准地图").performClick()
@@ -78,7 +79,9 @@ class AppSmokeTest {
         try {
             db.add(id, Fix(35.6812,139.7671,40.0,20f,1f,90f,5f,8f,"gps",123456,1000000000), 40.0)
             val out = ByteArrayOutputStream(); db.exportCsv(id, out)
-            assertTrue(out.toString("UTF-8").contains("35.6812,139.7671"))
+            val coordinates = out.toString("UTF-8").lineSequence().drop(1).first().split(',')
+            assertEquals(35.6812, coordinates[1].toDouble(), 1e-9)
+            assertEquals(139.7671, coordinates[2].toDouble(), 1e-9)
             assertEquals(1, db.list().first { it.id == id }.points)
             db.recover()
             assertTrue(db.list().first { it.id == id }.interrupted)

@@ -230,8 +230,12 @@ fun RailMap(
             }
             FeatureCollection.fromFeatures(lines) to FeatureCollection.fromFeatures(stations)
         }
-        style.getSourceAs<GeoJsonSource>("rail-local")?.setGeoJson(lines)
-        style.getSourceAs<GeoJsonSource>("stations-local")?.setGeoJson(stations)
+        withContext(Dispatchers.Main.immediate) {
+            if (loadedStyle === style) {
+                style.getSourceAs<GeoJsonSource>("rail-local")?.setGeoJson(lines)
+                style.getSourceAs<GeoJsonSource>("stations-local")?.setGeoJson(stations)
+            }
+        }
     }
     LaunchedEffect(loadedStyle, fix, follow) {
         val style = loadedStyle ?: return@LaunchedEffect

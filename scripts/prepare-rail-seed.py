@@ -11,7 +11,7 @@ from io import BytesIO
 
 URL = 'https://nlftp.mlit.go.jp/ksj/gml/data/N02/N02-25/N02-25_GML.zip'
 SHA256 = 'aaf76af133b2e771e538fabc4646d2e443dc1d5a67b221382a28d744e706cc9f'
-target = Path(__file__).resolve().parents[1] / 'app/src/main/assets/rail-2025.tsv.gz'
+target = Path(__file__).resolve().parents[1] / 'app/src/main/assets/rail-2025.seed'
 if len(sys.argv) > 1:
     data = Path(sys.argv[1]).read_bytes()
 else:

@@ -39,7 +39,7 @@ class LineMatcherTest {
     }
 
     @Test fun bundledTokaidoStationsFollowTheRealGeometry() {
-        val resource = java.io.File("src/main/assets/rail-2025.tsv.gz")
+        val resource = java.io.File("src/main/assets/rail-2025.seed")
         val sections = mutableListOf<RailSection>()
         val stations = mutableListOf<RailStation>()
         java.util.zip.GZIPInputStream(resource.inputStream()).bufferedReader().useLines { rows ->
