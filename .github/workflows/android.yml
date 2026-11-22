@@ -147,6 +147,7 @@ jobs:
             adb emu geo fix 121.4737 31.2304
             adb install -r dist/JRFANMAP-debug.apk
             adb install -r dist/app-debug-androidTest.apk
+            adb shell settings put secure immersive_mode_confirmations confirmed
             if [ '${{ matrix.profile }}' != smoke ]; then adb shell wm size 900x1920 && adb shell wm density 360 && adb shell wm fixed-to-user-rotation enabled && adb shell wm user-rotation lock ${{ matrix.rotation }}; fi
             mkdir -p ui-screenshots
             timeout 120 adb shell am instrument -w -e class '${{ matrix.tests }}' jp.jrfanmap.test/androidx.test.runner.AndroidJUnitRunner > android-emulator.txt
