@@ -3,13 +3,14 @@ package jp.jrfanmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import jp.jrfanmap.data.Fix
 import jp.jrfanmap.rail.RailBounds
 import jp.jrfanmap.RailApplication
 import androidx.test.rule.GrantPermissionRule
 import android.Manifest
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
-import androidx.compose.ui.geometry.Offset
 import jp.jrfanmap.data.TripDatabase
 import jp.jrfanmap.map.DownloadArea
 import org.maplibre.android.geometry.LatLngBounds
@@ -63,9 +64,13 @@ class AppSmokeTest {
         }
         compose.onNodeWithTag("rail-info-expand").performClick()
         compose.onNodeWithText("站点名录").assertExists()
-        compose.onNodeWithTag("rail-map-ready").performTouchInput {
-            swipe(Offset(width * .75f, height * .29f), Offset(width * .30f, height * .29f))
-        }
+        val mapBounds = compose.onNodeWithTag("rail-map-ready").fetchSemanticsNode().boundsInWindow
+        val startX = (mapBounds.left + mapBounds.width * .75f).toInt()
+        val endX = (mapBounds.left + mapBounds.width * .30f).toInt()
+        val y = (mapBounds.top + mapBounds.height * .29f).toInt()
+        val swipe = InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("input swipe $startX $y $endX $y 400")
+        ParcelFileDescriptor.AutoCloseInputStream(swipe).use { it.readBytes() }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("map-preview-shinjuku").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithTag("map-preview-shinjuku").assertDoesNotExist()
         compose.onNodeWithTag("rail-info-panel").assertIsDisplayed()
