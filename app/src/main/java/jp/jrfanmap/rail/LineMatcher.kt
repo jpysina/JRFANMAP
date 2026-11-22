@@ -110,6 +110,8 @@ internal class TrackGraph(val network: RailNetwork) {
     private data class Edge(val a: Int, val b: Int, val meters: Double)
     private data class StationOnEdge(val station: RailStation, val edge: Edge, val fraction: Double)
     private data class QueueNode(val id: Int, val meters: Double)
+    private data class Search(val distances: DoubleArray, val previous: Array<Edge?>)
+    private data class RouteEdge(val from: Int, val to: Int, val meters: Double, val start: Double)
     data class Forward(val reason: String, val stations: List<AheadStation> = emptyList())
 
     private val points = mutableListOf<GeoPoint>()
@@ -151,6 +153,67 @@ internal class TrackGraph(val network: RailNetwork) {
 
     private fun nearest(point: GeoPoint): Pair<Edge, Projection>? =
         edges.asSequence().map { it to project(point, points[it.a], points[it.b]) }.minByOrNull { it.second.distance }
+
+    /** Separate lines of traversal when the station data spans a branch or a break in the geometry. */
+    fun browsingStationGroups(): List<List<RailStation>> = buildList {
+        val remaining = stationsByEdge.values.flatten().toMutableList()
+        while (remaining.isNotEmpty()) {
+            val seed = remaining.first()
+            val connectedFromSeed = search(seed.edge.a).distances
+            val reachable = remaining.flatMap { listOf(it.edge.a, it.edge.b) }.distinct()
+                .filter { connectedFromSeed[it].isFinite() }
+            val start = reachable.maxBy { connectedFromSeed[it] }
+            val fromStart = search(start)
+            val end = reachable.maxBy { fromStart.distances[it] }
+            val route = buildList {
+                var tip = end
+                while (tip != start) {
+                    val edge = checkNotNull(fromStart.previous[tip])
+                    val previous = if (tip == edge.a) edge.b else edge.a
+                    add(RouteEdge(previous, tip, edge.meters, fromStart.distances[previous]))
+                    tip = previous
+                }
+            }
+            val ordered = remaining.mapNotNull { station ->
+                if (!fromStart.distances[station.edge.a].isFinite()) return@mapNotNull null
+                val closest = route.map { edge -> edge to project(station.station.point, points[edge.from], points[edge.to]) }
+                    .minByOrNull { it.second.distance } ?: return@mapNotNull null
+                val (edge, position) = closest
+                if (position.distance > 45) null else station to edge.start + position.t * edge.meters
+            }.sortedBy { it.second }
+            if (ordered.isEmpty()) {
+                add(listOf(seed.station))
+                remaining.removeAt(0)
+            } else {
+                val stations = ordered.map { it.first.station }.distinctBy { it.name }
+                val first = points[start]
+                val last = points[end]
+                add(if (first.lat > last.lat || (first.lat == last.lat && first.lon > last.lon)) stations.reversed() else stations)
+                remaining.removeAll(ordered.map { it.first }.toSet())
+            }
+        }
+    }.sortedByDescending { it.size }
+
+    private fun search(start: Int): Search {
+        val distances = DoubleArray(points.size) { Double.POSITIVE_INFINITY }
+        val previous = arrayOfNulls<Edge>(points.size)
+        val queue = PriorityQueue(compareBy<QueueNode> { it.meters })
+        distances[start] = 0.0
+        queue.add(QueueNode(start, 0.0))
+        while (queue.isNotEmpty()) {
+            val (id, meters) = queue.remove()
+            if (meters > distances[id]) continue
+            for (edge in links[id]) {
+                val target = if (edge.a == id) edge.b else edge.a
+                val cost = meters + edge.meters
+                if (cost >= distances[target]) continue
+                distances[target] = cost
+                previous[target] = edge
+                queue.add(QueueNode(target, cost))
+            }
+        }
+        return Search(distances, previous)
+    }
 
     fun ahead(previous: GeoPoint, now: GeoPoint): Forward {
         val (edge, projection) = nearest(now) ?: return Forward("站点资料不足")
@@ -196,7 +259,7 @@ internal class TrackGraph(val network: RailNetwork) {
                 }
             }
         }
-        val next = result.sortedBy { it.meters }.distinctBy { it.station.name }.take(4)
+        val next = result.sortedBy { it.meters }.distinctBy { it.station.name }
         val reason = when {
             branch && next.isEmpty() -> "线路前方分岔，等待设备通过分岔点"
             branch -> "仅显示分岔前的推断站点"

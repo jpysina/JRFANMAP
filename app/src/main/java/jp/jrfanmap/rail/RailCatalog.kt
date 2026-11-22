@@ -12,8 +12,8 @@ import java.util.zip.ZipFile
 
 data class GeoPoint(val lon: Double, val lat: Double)
 data class RailLine(val id: Long, val operator: String, val name: String, val category: String)
-data class RailSection(val lineId: Long, val shape: List<GeoPoint>)
-data class RailStation(val name: String, val point: GeoPoint)
+data class RailSection(val lineId: Long, val shape: List<GeoPoint>, val category: String = "")
+data class RailStation(val name: String, val point: GeoPoint, val lineId: Long? = null)
 data class RailNetwork(val line: RailLine, val sections: List<RailSection>, val stations: List<RailStation>)
 data class CatalogInfo(val year: Int, val lines: Int, val stations: Int, val bytes: Long)
 data class RailBounds(val west: Double, val south: Double, val east: Double, val north: Double) {
@@ -175,16 +175,16 @@ class RailCatalog(private val context: Context) : SQLiteOpenHelper(context, "rai
         readSections("east>=? AND west<=? AND north>=? AND south<=?", bounds.arguments())
 
     fun stations(bounds: RailBounds): List<RailStation> = readableDatabase.rawQuery(
-        "SELECT DISTINCT name,lon,lat FROM stations WHERE lon>=? AND lon<=? AND lat>=? AND lat<=?",
+        "SELECT DISTINCT name,lon,lat,line FROM stations WHERE lon>=? AND lon<=? AND lat>=? AND lat<=?",
         bounds.arguments()).use { cursor ->
         buildList {
-            while (cursor.moveToNext()) add(RailStation(cursor.getString(0), GeoPoint(cursor.getDouble(1), cursor.getDouble(2))))
+            while (cursor.moveToNext()) add(RailStation(cursor.getString(0), GeoPoint(cursor.getDouble(1), cursor.getDouble(2)), cursor.getLong(3)))
         }
     }
 
     private fun readSections(where: String, args: Array<String>) =
-        readableDatabase.rawQuery("SELECT line,shape FROM sections WHERE $where", args).use { c ->
-            buildList { while (c.moveToNext()) add(RailSection(c.getLong(0), decodeShape(c.getString(1)))) }
+        readableDatabase.rawQuery("SELECT line,shape,category FROM sections JOIN lines ON sections.line=lines.id WHERE $where", args).use { c ->
+            buildList { while (c.moveToNext()) add(RailSection(c.getLong(0), decodeShape(c.getString(1)), c.getString(2))) }
         }
 
     fun network(id: Long): RailNetwork? {

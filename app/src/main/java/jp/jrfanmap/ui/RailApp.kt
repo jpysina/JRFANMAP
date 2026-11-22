@@ -86,7 +86,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
                         when (tab) {
                             0 -> LivePage(model, catalog, telemetry, live, now, fresh, immersive, onRecord, onLocationPermission) { immersive = !immersive }
                             1 -> GpsPage(telemetry, now, fresh, onLocationPermission)
-                            2 -> RailMapPage(model, telemetry, fresh, catalog)
+                            2 -> RailMapPage(model, telemetry, fresh, catalog, live)
                             3 -> History(model, onExport) { tab = 0 }
                             else -> DataPage(model, catalog, keep) { value ->
                                 keep = value
@@ -106,7 +106,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     val context = LocalContext.current
     val fix = t.fix.takeIf { fresh }
     val line = match.line.takeIf { fresh && fix?.mock != true }
-    val ahead = if (line == null) emptyList() else match.next
+    val ahead = if (line == null) emptyList() else match.next.take(4)
     val speed = fix?.speedMps?.times(3.6f)
     val status = when {
         fresh && fix?.mock == true -> "模拟定位"
@@ -117,8 +117,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     var follow by rememberSaveable { mutableStateOf(true) }
     var showStops by rememberSaveable { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
-    var selectedIds by remember { mutableStateOf<List<Long>>(emptyList()) }
-    var stationName by remember { mutableStateOf<String?>(null) }
+    var selection by remember { mutableStateOf(RailSelectionState()) }
     var preview by remember { mutableStateOf(false) }
     val handle = remember { MapHandle() }
     val offline by model.offline.state.collectAsStateWithLifecycle()
@@ -126,10 +125,12 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     BoxWithConstraints(Modifier.fillMaxSize().testTag("live-page")) {
         val wide = maxWidth > maxHeight && maxWidth >= 490.dp
         val overlayHeight = maxHeight * (if (wide) .54f else .29f)
-        RailMap(fix, t.path, follow, handle, MapBase.STANDARD, t.network, offline.regions, catalog.info?.year ?: 0,
-            model::visibleRail, onLines = { stationName = null; selectedIds = it }, onStation = { selectedIds = emptyList(); stationName = it },
-            onShinjukuPreview = { preview = it }, onEmptyTap = { selectedIds = emptyList(); stationName = null },
-            modifier = Modifier.fillMaxSize(), matchedLine = line?.id, ahead = ahead,
+        RailMap(fix, t.path, follow, handle, MapBase.PALE, t.network, offline.regions, catalog.info?.year ?: 0,
+            model::visibleRail, onLines = { selection = RailSelectionState(lines = it) },
+            onStation = { selection = RailSelectionState(station = it) },
+            onShinjukuPreview = { preview = it }, onEmptyTap = { selection = RailSelectionState() },
+            modifier = Modifier.fillMaxSize(), highlightedLine = selection.lineId ?: line?.id,
+            ahead = ahead.takeIf { selection.lineId == null || selection.lineId == line?.id }.orEmpty(),
             onGesture = { follow = false }, onError = { error = it })
 
         Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(9.dp),
@@ -155,7 +156,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
             }
         }
 
-        if (selectedIds.isEmpty() && stationName == null) Column(Modifier.align(Alignment.BottomStart).padding(start = 8.dp, end = 8.dp, bottom = 29.dp)
+        if (selection.isEmpty) Column(Modifier.align(Alignment.BottomStart).padding(start = 10.dp, end = 10.dp, bottom = 30.dp)
             .then(if (wide) Modifier.width((maxWidth * .38f).coerceAtMost(278.dp)) else Modifier.widthIn(max = 310.dp).fillMaxWidth())
             .heightIn(max = overlayHeight.coerceAtLeast(100.dp)).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -193,7 +194,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
                             } else Text(if (fresh) match.reason else "等待新的定位观测", color = Muted, fontSize = 11.sp)
                         }
                         if (line != null) {
-                            TextButton(onClick = { selectedIds = listOf(line.id) },
+                            TextButton(onClick = { selection = RailSelectionState(lines = listOf(line.id)) },
                                 contentPadding = PaddingValues(horizontal = 8.dp)) { Text("线路资料") }
                         }
                         if (ahead.isNotEmpty()) {
@@ -231,7 +232,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
             Text("国土交通省・国土地理院", Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                 color = Color.White, fontSize = 9.sp, lineHeight = 12.sp)
         }
-        RailSelection(model, selectedIds, stationName) { selectedIds = emptyList(); stationName = null }
+        RailSelection(model, selection, match.takeIf { line != null }) { selection = it }
     }
 }
 
@@ -337,21 +338,21 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     }
 }
 
-@Composable private fun RailMapPage(model: RailViewModel, telemetry: Telemetry, fresh: Boolean, catalog: CatalogState) {
+@Composable private fun RailMapPage(model: RailViewModel, telemetry: Telemetry, fresh: Boolean, catalog: CatalogState, match: LiveMatch) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("display", 0) }
     var follow by rememberSaveable { mutableStateOf(false) }
     var base by rememberSaveable {
         mutableStateOf(prefs.getString("map_base", null)?.let { runCatching { MapBase.valueOf(it) }.getOrNull() }
-            ?: if (prefs.getBoolean("gsi", false)) MapBase.VECTOR else MapBase.RAIL)
+            ?: if (prefs.getBoolean("gsi", false)) MapBase.VECTOR else MapBase.PALE)
     }
     var showSources by remember { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf<List<Long>>(emptyList()) }
-    var stationName by remember { mutableStateOf<String?>(null) }
+    var railSelection by remember { mutableStateOf(RailSelectionState()) }
     var preview by remember { mutableStateOf(false) }
     var area by remember { mutableStateOf<DownloadArea?>(null) }
     val handle = remember { MapHandle() }
     val offline by model.offline.state.collectAsStateWithLifecycle()
+    val activeMatch = match.takeIf { fresh && telemetry.fix?.mock == false }
 
     var lastOfflineMessage by remember { mutableStateOf(offline.message) }
     LaunchedEffect(offline.message, offline.busy) {
@@ -363,14 +364,15 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     Box(Modifier.fillMaxSize().testTag("map-page")) {
         RailMap(telemetry.fix.takeIf { fresh }, telemetry.path, follow, handle, base, telemetry.network,
             offline.regions, catalog.info?.year ?: 0, model::visibleRail,
-            onLines = { ids -> stationName = null; selectedIds = ids },
-            onStation = { selectedIds = emptyList(); stationName = it }, onShinjukuPreview = { preview = it },
-            modifier = Modifier.fillMaxSize(), onGesture = { follow = false }, onEmptyTap = {
-                if (selectedIds.isEmpty() && stationName == null) {
-                    model.message.value = if (catalog.busy) "铁路库正在准备" else "附近未命中铁路，请放大后点蓝绿色线路"
+            onLines = { railSelection = RailSelectionState(lines = it) },
+            onStation = { railSelection = RailSelectionState(station = it) }, onShinjukuPreview = { preview = it },
+            modifier = Modifier.fillMaxSize(), highlightedLine = railSelection.lineId,
+            ahead = activeMatch?.takeIf { it.line?.id == railSelection.lineId }?.next?.take(4).orEmpty(),
+            onGesture = { follow = false }, onEmptyTap = {
+                if (railSelection.isEmpty) {
+                    model.message.value = if (catalog.busy) "铁路库正在准备" else "附近未命中铁路，请放大后再点线路"
                 }
-                selectedIds = emptyList()
-                stationName = null
+                railSelection = RailSelectionState()
             }, onError = { model.message.value = it })
         if (preview) PreviewCaption(Modifier.align(Alignment.TopStart).padding(8.dp))
         Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
@@ -386,7 +388,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
                     showSources = false
                 })
                 HorizontalDivider()
-                listOf(MapBase.RAIL to "铁路概略图", MapBase.STANDARD to "地理院标准地图",
+                listOf(MapBase.PALE to "地理院淡色地图", MapBase.RAIL to "铁路概略图", MapBase.STANDARD to "地理院标准地图",
                     MapBase.VECTOR to "地理院实验矢量图").forEach { (mode, title) ->
                     DropdownMenuItem(text = { Text(if (mode == base) "$title ✓" else title) }, onClick = {
                         base = mode
@@ -410,12 +412,12 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
                     })
             }
         }
-        Surface(Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp).widthIn(max = 188.dp),
+        Surface(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 6.dp).widthIn(max = 195.dp),
             shape = Cut, color = Ink.copy(alpha = .86f)) {
             Text(CATALOG_CREDIT, Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                 color = Color.White, fontSize = 9.sp, lineHeight = 12.sp)
         }
-        RailSelection(model, selectedIds, stationName) { selectedIds = emptyList(); stationName = null }
+        RailSelection(model, railSelection, activeMatch) { railSelection = it }
     }
     area?.let { selection ->
         val fits = selection.tiles in 1..TileBudget.LIMIT
@@ -436,10 +438,19 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     }
 }
 
-@Composable private fun RailSelection(model: RailViewModel, selectedIds: List<Long>, stationName: String?, close: () -> Unit) {
-    if (selectedIds.isEmpty() && stationName == null) return
+private data class RailSelectionState(val lines: List<Long> = emptyList(), val station: String? = null,
+                                      val lineId: Long? = lines.singleOrNull()) {
+    val isEmpty: Boolean get() = lines.isEmpty() && station == null
+}
+
+@Composable private fun RailSelection(model: RailViewModel, selection: RailSelectionState, match: LiveMatch?,
+                                      onSelection: (RailSelectionState) -> Unit) {
+    if (selection.isEmpty) return
+    val selectedIds = selection.lines
+    val stationName = selection.station
+    val picked = selection.lineId
+    val close = { onSelection(RailSelectionState()) }
     var choices by remember(selectedIds) { mutableStateOf<List<RailLine>?>(null) }
-    var picked by remember(selectedIds) { mutableStateOf<Long?>(null) }
     var line by remember(picked, selectedIds) { mutableStateOf<RailNetwork?>(null) }
     var unavailable by remember(selectedIds, picked) { mutableStateOf(false) }
     var expanded by remember(selectedIds, picked, stationName) { mutableStateOf(false) }
@@ -448,12 +459,12 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
         try {
             val results = model.lines(selectedIds)
             choices = results
-            picked = results.singleOrNull()?.id
+            if (picked == null && results.size == 1) onSelection(selection.copy(lineId = results.single().id))
             unavailable = results.isEmpty()
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: Exception) { unavailable = true }
     }
-    LaunchedEffect(picked) {
+    LaunchedEffect(picked, selectedIds) {
         val id = picked ?: return@LaunchedEffect
         try {
             line = model.line(id)
@@ -485,7 +496,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
             else -> 68.dp
         }.coerceAtMost((maxHeight - 30.dp).coerceAtLeast(0.dp))
         Surface(Modifier.align(Alignment.BottomEnd)
-            .padding(end = 8.dp, bottom = 31.dp)
+            .padding(end = 12.dp, bottom = 44.dp)
             .width(width).heightIn(max = height)
             .testTag("rail-info-panel")
             .semantics { paneTitle = "铁路资料" },
@@ -519,15 +530,19 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
                             when {
                                 stationName != null -> RailSource()
                                 network != null -> {
-                                    LineDetails(network)
-                                    if (candidates.size > 1) TextButton(onClick = { picked = null }) { Text("查看其他候选线路") }
+                                    LineDetails(network, match?.takeIf { it.line?.id == network.line.id })
+                                    if (candidates.size > 1) TextButton(onClick = { onSelection(selection.copy(lineId = null)) }) {
+                                        Text("查看其他候选线路")
+                                    }
                                 }
                                 isChoice -> {
                                     candidates.groupBy { it.operator }.forEach { (operator, lines) ->
                                         if (expanded) Text(operator, color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                         lines.forEach { candidate ->
                                             Row(Modifier.fillMaxWidth().testTag("rail-choice")
-                                                .clickable(role = androidx.compose.ui.semantics.Role.Button) { picked = candidate.id }
+                                                .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                                    onSelection(selection.copy(lineId = candidate.id))
+                                                }
                                                 .heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                                                 Text(candidate.name, Modifier.weight(1f), fontWeight = FontWeight.Medium)
                                                 Text(candidate.categoryLabel(), color = Mint, fontSize = 12.sp)
@@ -545,9 +560,14 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     }
 }
 
-@Composable private fun LineDetails(network: RailNetwork) {
+@Composable private fun LineDetails(network: RailNetwork, match: LiveMatch?) {
     val context = LocalContext.current
-    val stations = remember(network) { network.stations.map { it.name }.distinct().sorted() }
+    var reverse by remember(network.line.id) { mutableStateOf(false) }
+    val groups by produceState<List<List<RailStation>>?>(null, network) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            TrackGraph(network).browsingStationGroups()
+        }
+    }
     val kilometers by produceState<Double?>(null, network) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             network.sections.sumOf { section -> section.shape.zipWithNext().sumOf { (a, b) ->
@@ -556,8 +576,32 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
         }
     }
     Text("站点名录", Modifier.semantics { heading() }, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    Text("${stations.size} 个不同站名 · 按站名排序", color = Muted, fontSize = 11.sp)
-    Text(stations.joinToString(" · ").ifBlank { "本版资料未收录车站" }, fontSize = 13.sp, lineHeight = 19.sp)
+    val routes = groups
+    if (match != null && match.next.isNotEmpty()) {
+        Text(match.reason, color = Muted, fontSize = 11.sp)
+        match.next.forEachIndexed { index, stop ->
+            StationTimelineRow(stop.station.name, index, match.next.lastIndex, stop.meters)
+        }
+    } else {
+        if (match != null) Text(match.reason, color = Muted, fontSize = 11.sp)
+        when {
+            routes == null -> Text("正在整理站序…", color = Muted, fontSize = 11.sp)
+            routes.isEmpty() -> Text("离线资料暂无法建立站序", color = Muted, fontSize = 12.sp)
+            else -> {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("按轨道走向 · 浏览方向", Modifier.weight(1f), color = Muted, fontSize = 11.sp)
+                    TextButton(onClick = { reverse = !reverse }, modifier = Modifier.testTag("reverse-stations"),
+                        contentPadding = PaddingValues(horizontal = 4.dp)) { Text("反向 ↕", fontSize = 12.sp) }
+                }
+                routes.forEach { route ->
+                    val stations = if (reverse) route.asReversed() else route
+                    if (stations.size > 1) Text("${stations.first().name} → ${stations.last().name}",
+                        color = Mint, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    stations.forEachIndexed { index, stop -> StationTimelineRow(stop.name, index, stations.lastIndex) }
+                }
+            }
+        }
+    }
     operatorPages.firstOrNull { it.operator == network.line.operator }?.let { page ->
         TextButton(onClick = { open(context, page.url) }) { Text("${page.title} 官方运行信息 ↗") }
     }
@@ -572,6 +616,23 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     }
     HorizontalDivider(color = Grid)
     RailSource()
+}
+
+@Composable private fun StationTimelineRow(name: String, index: Int, last: Int, meters: Double? = null) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 31.dp).testTag("rail-station-row"),
+        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Canvas(Modifier.width(16.dp).height(31.dp)) {
+            val start = if (index == 0) center.y else -2.dp.toPx()
+            val end = if (index == last) center.y else size.height + 2.dp.toPx()
+            drawLine(Mint, Offset(center.x, start), Offset(center.x, end), strokeWidth = 1.5.dp.toPx())
+            drawCircle(Mint, if (index == 0) 4.dp.toPx() else 3.dp.toPx())
+            if (index != 0) drawCircle(Panel, 1.5.dp.toPx())
+        }
+        Text(name, Modifier.weight(1f), fontSize = 13.sp,
+            fontWeight = if (index == 0) FontWeight.SemiBold else FontWeight.Medium)
+        if (meters != null) Text(if (meters < 1000) "${meters.fmt(0)} m" else "${(meters / 1000).fmt()} km",
+            color = Muted, fontFamily = Mono, fontSize = 11.sp)
+    }
 }
 
 @Composable private fun RailSource() {

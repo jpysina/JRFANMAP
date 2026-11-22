@@ -39,11 +39,35 @@ class LineMatcherTest {
     }
 
     @Test fun bundledTokaidoStationsFollowTheRealGeometry() {
+        val graph = TrackGraph(bundledNetwork("東海旅客鉄道", "東海道新幹線"))
+        assertTrue(graph.network.stations.any { it.name == "品川" })
+        val next = graph.ahead(GeoPoint(139.75834, 35.65940), GeoPoint(139.75805, 35.65750))
+        assertEquals("品川", next.stations.firstOrNull()?.station?.name)
+    }
+
+    @Test fun bundledYamanoteBrowsingFollowsTheRegisteredTrack() {
+        val graph = TrackGraph(bundledNetwork("東日本旅客鉄道", "山手線"))
+        assertEquals(listOf("品川", "大崎", "五反田", "目黒", "恵比寿", "渋谷", "原宿", "代々木", "新宿",
+            "新大久保", "高田馬場", "目白", "池袋", "大塚", "巣鴨", "駒込", "田端"),
+            graph.browsingStationGroups().single().map { it.name })
+    }
+
+    @Test fun separatesStationListsAcrossBreaksInTheRailGeometry() {
+        val graph = TrackGraph(RailNetwork(line, listOf(
+            RailSection(1, listOf(point(0), point(400))),
+            RailSection(1, listOf(point(900), point(1400)))
+        ), listOf(RailStation("東端", point(1300)), RailStation("西端", point(100)),
+            RailStation("西中央", point(300)), RailStation("東中央", point(1000)))))
+        assertEquals(setOf(listOf("西端", "西中央"), listOf("東中央", "東端")),
+            graph.browsingStationGroups().map { group -> group.map { it.name } }.toSet())
+    }
+
+    private fun bundledNetwork(operator: String, name: String): RailNetwork {
         val resource = java.io.File("src/main/assets/rail-2025.seed")
         val sections = mutableListOf<RailSection>()
         val stations = mutableListOf<RailStation>()
         java.util.zip.GZIPInputStream(resource.inputStream()).bufferedReader().useLines { rows ->
-            rows.filter { it.startsWith("東海旅客鉄道\t東海道新幹線\t") }.forEach {
+            rows.filter { it.startsWith("$operator\t$name\t") }.forEach {
                 val parts = it.split('\t', limit = 5)
                 val shape = parts[4].split(';').map { item ->
                     val (lon, lat) = item.split(',')
@@ -53,9 +77,6 @@ class LineMatcherTest {
                 else stations += RailStation(parts[3], GeoPoint(shape.map { it.lon }.average(), shape.map { it.lat }.average()))
             }
         }
-        assertTrue(stations.any { it.name == "品川" })
-        val graph = TrackGraph(RailNetwork(line, sections, stations))
-        val next = graph.ahead(GeoPoint(139.75834, 35.65940), GeoPoint(139.75805, 35.65750))
-        assertEquals("品川", next.stations.firstOrNull()?.station?.name)
+        return RailNetwork(line.copy(operator = operator, name = name), sections, stations)
     }
 }
