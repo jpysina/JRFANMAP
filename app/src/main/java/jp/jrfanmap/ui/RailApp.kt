@@ -500,7 +500,7 @@ private data class RailSelectionState(val lines: List<Long> = emptyList(), val s
             .width(width).heightIn(max = height)
             .testTag("rail-info-panel")
             .semantics { paneTitle = "铁路资料" },
-            color = Panel.copy(alpha = .88f), shape = Cut, shadowElevation = 2.dp,
+            color = Panel.copy(alpha = .93f), shape = Cut, shadowElevation = 2.dp,
             border = androidx.compose.foundation.BorderStroke(1.dp, Grid.copy(alpha = .8f))) {
             Column(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth().padding(start = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -575,28 +575,30 @@ private data class RailSelectionState(val lines: List<Long> = emptyList(), val s
             } }
         }
     }
-    Text("站点名录", Modifier.semantics { heading() }, fontWeight = FontWeight.Bold, fontSize = 13.sp)
     val routes = groups
+    val browsing = match?.next.isNullOrEmpty() && !routes.isNullOrEmpty()
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("站点名录", Modifier.weight(1f).semantics { heading() }, fontWeight = FontWeight.Bold,
+            fontSize = 13.sp, lineHeight = 17.sp)
+        if (browsing) TextButton(onClick = { reverse = !reverse }, modifier = Modifier.testTag("reverse-stations"),
+            contentPadding = PaddingValues(horizontal = 4.dp)) { Text("反向 ↕", fontSize = 12.sp, lineHeight = 15.sp) }
+    }
     if (match != null && match.next.isNotEmpty()) {
-        Text(match.reason, color = Muted, fontSize = 11.sp)
+        Text(match.reason, color = Muted, fontSize = 11.sp, lineHeight = 14.sp)
         match.next.forEachIndexed { index, stop ->
             StationTimelineRow(stop.station.name, index, match.next.lastIndex, stop.meters)
         }
     } else {
-        if (match != null) Text(match.reason, color = Muted, fontSize = 11.sp)
+        if (match != null) Text(match.reason, color = Muted, fontSize = 11.sp, lineHeight = 14.sp)
         when {
             routes == null -> Text("正在整理站序…", color = Muted, fontSize = 11.sp)
             routes.isEmpty() -> Text("离线资料暂无法建立站序", color = Muted, fontSize = 12.sp)
             else -> {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("按轨道走向 · 浏览方向", Modifier.weight(1f), color = Muted, fontSize = 11.sp)
-                    TextButton(onClick = { reverse = !reverse }, modifier = Modifier.testTag("reverse-stations"),
-                        contentPadding = PaddingValues(horizontal = 4.dp)) { Text("反向 ↕", fontSize = 12.sp) }
-                }
                 routes.forEach { route ->
                     val stations = if (reverse) route.asReversed() else route
                     if (stations.size > 1) Text("${stations.first().name} → ${stations.last().name}",
-                        color = Mint, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Modifier.semantics { contentDescription = "按轨道走向浏览，${stations.first().name}到${stations.last().name}" },
+                        color = Mint, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     stations.forEachIndexed { index, stop -> StationTimelineRow(stop.name, index, stations.lastIndex) }
                 }
             }
@@ -619,16 +621,16 @@ private data class RailSelectionState(val lines: List<Long> = emptyList(), val s
 }
 
 @Composable private fun StationTimelineRow(name: String, index: Int, last: Int, meters: Double? = null) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 31.dp).testTag("rail-station-row"),
+    Row(Modifier.fillMaxWidth().heightIn(min = 27.dp).testTag("rail-station-row"),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Canvas(Modifier.width(16.dp).height(31.dp)) {
+        Canvas(Modifier.width(16.dp).height(27.dp)) {
             val start = if (index == 0) center.y else -2.dp.toPx()
             val end = if (index == last) center.y else size.height + 2.dp.toPx()
             drawLine(Mint, Offset(center.x, start), Offset(center.x, end), strokeWidth = 1.5.dp.toPx())
             drawCircle(Mint, if (index == 0) 4.dp.toPx() else 3.dp.toPx())
             if (index != 0) drawCircle(Panel, 1.5.dp.toPx())
         }
-        Text(name, Modifier.weight(1f), fontSize = 13.sp,
+        Text(name, Modifier.weight(1f), fontSize = 13.sp, lineHeight = 18.sp,
             fontWeight = if (index == 0) FontWeight.SemiBold else FontWeight.Medium)
         if (meters != null) Text(if (meters < 1000) "${meters.fmt(0)} m" else "${(meters / 1000).fmt()} km",
             color = Muted, fontFamily = Mono, fontSize = 11.sp)

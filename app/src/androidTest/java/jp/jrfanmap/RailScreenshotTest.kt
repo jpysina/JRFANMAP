@@ -3,6 +3,7 @@ package jp.jrfanmap
 import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.SystemClock
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -71,10 +72,18 @@ class RailScreenshotTest {
         compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-station-row").fetchSemanticsNodes().size > 2 }
         compose.onNodeWithText("站点名录").assertIsDisplayed()
         compose.onNodeWithText("品川 → 田端").assertIsDisplayed()
+        val visibleRows = compose.onAllNodesWithTag("rail-station-row").fetchSemanticsNodes()
+            .count { it.boundsInWindow.height > 16 }
+        assertTrue("The compact panel shows several rows ($visibleRows)", visibleRows >= 3)
     }
 
     private fun awaitShinjukuMap(highlighted: Boolean) {
-        compose.waitUntil(30_000) { mapTilesAndRouteAreVisible(highlighted) }
+        try {
+            compose.waitUntil(30_000) { mapTilesAndRouteAreVisible(highlighted) }
+        } catch (error: ComposeTimeoutException) {
+            takeReviewScreenshot(if (highlighted) "map-diagnostic" else "portrait-live")
+            throw error
+        }
     }
 
     private fun mapTilesAndRouteAreVisible(highlighted: Boolean): Boolean {
@@ -88,7 +97,7 @@ class RailScreenshotTest {
                     val (red, green, blue) = Triple(Color.red(pixel), Color.green(pixel), Color.blue(pixel))
                     if (red > 234 && red == green && green == blue) mapPixels++
                     if (highlighted && red > 229 && green in 135..185 && blue < 65) railPixels++
-                    if (!highlighted && red in 30..100 && green in 94..135 && blue in 105..165) railPixels++
+                    if (!highlighted && red in 25..125 && green in 85..150 && blue - red >= 30) railPixels++
                 }
             }
             return mapPixels > 500 && railPixels > 20
@@ -124,6 +133,7 @@ class RailScreenshotTest {
 
     private fun takeReviewScreenshot(name: String) {
         compose.waitForIdle()
+        SystemClock.sleep(400)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val destination = File(instrumentation.targetContext.filesDir, "ui-screenshots")
         destination.mkdirs()

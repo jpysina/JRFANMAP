@@ -3,6 +3,7 @@ package jp.jrfanmap.map
 import android.graphics.RectF
 import android.graphics.PointF
 import android.os.Bundle
+import android.view.View
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -100,7 +101,13 @@ fun RailMap(
         var started = false
         var resumed = false
         val listener = MapView.OnDidFailLoadingMapListener { errorCallback("地图加载失败，可切回铁路底图") }
+        val layout = View.OnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                view.post { if (!disposed) map?.let { viewport = it.viewport() } }
+            }
+        }
         view.addOnDidFailLoadingMapListener(listener)
+        view.addOnLayoutChangeListener(layout)
         view.getMapAsync { instance ->
             if (disposed) return@getMapAsync
             map = instance
@@ -115,11 +122,7 @@ fun RailMap(
             instance.cameraPosition = CameraPosition.Builder()
                 .target(LatLng(start.center.lat, start.center.lon))
                 .zoom(if (start.shinjukuPreview) SHINJUKU_ZOOM else JAPAN_FIX_ZOOM).build()
-            instance.addOnCameraIdleListener {
-                val b = instance.projection.visibleRegion.latLngBounds
-                viewport = Viewport(RailBounds(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth),
-                    instance.cameraPosition.zoom)
-            }
+            instance.addOnCameraIdleListener { viewport = instance.viewport() }
             fun enterFreeBrowse() {
                 showingShinjuku = false
                 gestureCallback()
@@ -180,6 +183,7 @@ fun RailMap(
             handle.map = null
             tapJob?.cancel()
             view.removeOnDidFailLoadingMapListener(listener)
+            view.removeOnLayoutChangeListener(layout)
             if (resumed) view.onPause()
             if (started) view.onStop()
             view.onDestroy()
@@ -229,8 +233,7 @@ fun RailMap(
             style.addLayer(CircleLayer("device-dot", "device").withProperties(circleColor("#017D72"), circleRadius(7f),
                 circleStrokeColor("#FFFFFF"), circleStrokeWidth(3f)))
             loadedStyle = style
-            val b = instance.projection.visibleRegion.latLngBounds
-            viewport = Viewport(RailBounds(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth), instance.cameraPosition.zoom)
+            viewport = instance.viewport()
         }
     }
 
@@ -251,7 +254,9 @@ fun RailMap(
                 if (region != null) setBounds(region.west.toFloat(), region.south.toFloat(), region.east.toFloat(), region.north.toFloat())
             }
             style.addSource(RasterSource(id, tiles, 256))
-            style.addLayerBelow(RasterLayer(id, id).withProperties(rasterFadeDuration(0f)), TRACK_CASING)
+            val layer = RasterLayer(id, id).withProperties(rasterFadeDuration(0f))
+            if (pale) layer.setProperties(rasterBrightnessMin(.28f), rasterSaturation(-.45f))
+            style.addLayerBelow(layer, TRACK_CASING)
         }
         fun addOnline() {
             val pale = base == MapBase.PALE
@@ -297,7 +302,7 @@ fun RailMap(
                     addStringProperty("category", section.category)
                 }
             }
-            val stations = datasets.second.map { station ->
+            val stations = stationMarkers(datasets.second).map { station ->
                 Feature.fromGeometry(Point.fromLngLat(station.point.lon, station.point.lat)).apply {
                     addStringProperty("station", station.name)
                     station.lineId?.let { addStringProperty("railId", it.toString()) }
@@ -348,6 +353,27 @@ fun RailMap(
     }
     AndroidView(factory = { view }, modifier = modifier.testTag(if (loadedStyle != null) "rail-map-ready" else "rail-map-loading"))
 }
+
+private fun MapLibreMap.viewport(): Viewport {
+    val bounds = projection.visibleRegion.latLngBounds
+    return Viewport(RailBounds(bounds.longitudeWest, bounds.latitudeSouth, bounds.longitudeEast, bounds.latitudeNorth), cameraPosition.zoom)
+}
+
+private fun stationMarkers(stations: List<RailStation>): List<RailStation> =
+    stations.groupBy { it.lineId to it.name }.values.flatMap { duplicates ->
+        val clusters = mutableListOf<MutableList<RailStation>>()
+        for (station in duplicates) {
+            val cluster = clusters.firstOrNull { group ->
+                val anchor = group.first().point
+                kotlin.math.hypot((station.point.lon - anchor.lon) * kotlin.math.cos(Math.toRadians(anchor.lat)),
+                    station.point.lat - anchor.lat) < .005
+            }
+            if (cluster == null) clusters.add(mutableListOf(station)) else cluster.add(station)
+        }
+        clusters.map { group ->
+            group.first().copy(point = GeoPoint(group.map { it.point.lon }.average(), group.map { it.point.lat }.average()))
+        }
+    }
 
 private fun addGsiRailDetails(style: Style) {
     val tiles = TileSet("2.2.0", GSI_RAIL_TILE).apply {
