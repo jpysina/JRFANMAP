@@ -1,0 +1,1 @@
+{"version":8,"name":"Offline Japan","sources":{"land":{"type":"geojson","data":"asset://japan-land.json"}},"layers":[{"id":"water","type":"background","paint":{"background-color":"#182D3A"}},{"id":"land","type":"fill","source":"land","paint":{"fill-color":"#343F45","fill-outline-color":"#748A92"}}]}

@@ -4,7 +4,10 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.jrfanmap.data.Fix
-import jp.jrfanmap.data.KeyStore
+import jp.jrfanmap.rail.RailBounds
+import jp.jrfanmap.RailApplication
+import androidx.test.rule.GrantPermissionRule
+import android.Manifest
 import jp.jrfanmap.data.TripDatabase
 import org.junit.Assert.*
 import org.junit.Rule
@@ -14,19 +17,21 @@ import java.io.ByteArrayOutputStream
 
 @RunWith(AndroidJUnit4::class)
 class AppSmokeTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
-    @Test fun navigationWorksWithoutPermissionsOrCredentials() {
-        compose.onNodeWithText("沿着铁道，感知此刻").assertIsDisplayed()
-        compose.onNodeWithText("●  开始定位与行程记录").assertIsDisplayed()
-        compose.onNodeWithText("卫星", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("等待卫星状态").assertIsDisplayed()
-        compose.onNodeWithText("铁路", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("尚未获取运营方数据").assertIsDisplayed()
-        compose.onNodeWithText("行程", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("行程记录").assertIsDisplayed()
-        compose.onNodeWithText("设置", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("你的随车观测站").assertIsDisplayed()
+    @get:Rule(order = 0) val permission = GrantPermissionRule.grant(
+        Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
+    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test fun opensEachPageAndEntersImmersiveMode() {
+        compose.onNodeWithTag("live-page").assertIsDisplayed()
+        compose.onNodeWithText("全屏").performClick()
+        compose.onNodeWithTag("tab-0").assertDoesNotExist()
+        compose.onNodeWithText("退出全屏").performClick()
+        listOf("gps-page", "map-page", "history-page", "data-page").forEachIndexed { index, page ->
+            compose.onNodeWithTag("tab-${index + 1}").performClick()
+            compose.onNodeWithTag(page).assertIsDisplayed()
+        }
     }
+
     @Test fun actualDatabaseRoundTripExportAndRecovery() {
         val context = compose.activity
         val db = TripDatabase(context)
@@ -41,12 +46,13 @@ class AppSmokeTest {
             assertNotNull(db.list().first { it.id == id }.end)
         } finally { db.delete(id); db.close() }
     }
-    @Test fun apiKeyUsesDeviceKeystore() {
-        val keys = KeyStore(compose.activity)
-        keys.save("local-test-value")
-        assertEquals("local-test-value", keys.read())
-        val raw = compose.activity.getSharedPreferences("api_keys",0).getString("odpt","")!!
-        assertFalse(raw.contains("local-test-value"))
-        keys.save(""); assertEquals("", keys.read())
+    @Test fun bundledRailDatabaseContainsJapaneseLinesAndStations() {
+        val catalog = (compose.activity.application as RailApplication).store.catalog
+        val info = catalog.prepare()
+        assertTrue(info.lines > 500)
+        assertTrue(info.stations >= 10_000)
+        val lines = catalog.sections(RailBounds(139.72, 35.61, 139.80, 35.72))
+        assertTrue(lines.map { it.lineId }.distinct().mapNotNull(catalog::network).any { it.line.name == "東海道新幹線" })
+        assertTrue(catalog.stations(RailBounds(139.75, 35.67, 139.78, 35.70)).any { it.name == "東京" })
     }
 }

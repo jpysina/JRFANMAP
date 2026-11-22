@@ -6,16 +6,22 @@ data class Fix(
     val latitude: Double, val longitude: Double, val altitude: Double?,
     val speedMps: Float?, val speedAccuracy: Float?, val bearing: Float?,
     val accuracy: Float, val verticalAccuracy: Float?, val provider: String,
-    val time: Long, val elapsedNanos: Long, val mock: Boolean = false
+    val time: Long, val elapsedNanos: Long, val mock: Boolean = false,
+    val bearingAccuracy: Float? = null, val mslAltitude: Double? = null, val mslAccuracy: Float? = null
 )
-data class Satellite(val constellation: String, val id: Int, val cn0: Float, val used: Boolean)
+data class Dilution(val pdop: Float?, val hdop: Float?, val vdop: Float?)
+data class Satellite(val constellation: String, val id: Int, val cn0: Float, val used: Boolean,
+    val elevation: Float, val azimuth: Float, val frequencyMhz: Float?, val ephemeris: Boolean,
+    val almanac: Boolean, val basebandCn0: Float?)
 data class Telemetry(
     val recording: Boolean = false, val tripId: Long? = null, val fix: Fix? = null,
     val satellites: List<Satellite> = emptyList(), val pressureHpa: Float? = null,
     val magneticHeading: Float? = null, val acceleration: Float? = null,
     val network: Boolean = false, val message: String = "尚未开始定位",
     val distanceM: Double = 0.0, val maxSpeedKmh: Float = 0f,
-    val startedAt: Long? = null, val path: List<Fix> = emptyList()
+    val startedAt: Long? = null, val path: List<Fix> = emptyList(), val active: Boolean = false,
+    val samples: List<Fix> = emptyList(), val dop: Dilution? = null, val firstFixMillis: Int? = null,
+    val rawMeasurements: Int? = null, val magneticField: Float? = null, val angularSpeed: Float? = null
 )
 
 object FixPolicy {

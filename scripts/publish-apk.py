@@ -58,7 +58,7 @@ notes = f'''下载 Assets 中的 **JRFANMAP-debug.apk**，传到 Android 手机�
 - 来源提交：{sha}
 - 自动构建：https://github.com/{repository}/actions/runs/{run_id}
 - APK 构建、JVM 单元测试、Android Lint 与 APK 签名检查通过。
-- 实际 GPS、车内传感器、锁屏记录及离线地图仍需真机验证；ODPT 需要自己的授权 Key，JR 东日本实时数据覆盖未验证。
+- 提供离线铁路库、GPS 诊断和 LIVE 前方站序。线路及站点按设备观测推断，实际停站以运营方为准。
 
 '''
 if os.environ.get('SIGNING_KEY_CONFIGURED', '').lower() == 'true':
