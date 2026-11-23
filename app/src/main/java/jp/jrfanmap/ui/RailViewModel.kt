@@ -85,6 +85,7 @@ class RailViewModel(app: Application) : AndroidViewModel(app) {
         }
     suspend fun line(id: Long): RailNetwork? = withContext(Dispatchers.IO) { store.catalog.network(id) }
     suspend fun lines(ids: List<Long>): List<RailLine> = withContext(Dispatchers.IO) { store.catalog.lines(ids) }
+    suspend fun tripSpeeds(id: Long) = withContext(Dispatchers.IO) { store.database.speedHistory(id) }
 
     fun refreshTrips() { viewModelScope.launch(Dispatchers.IO) { history.value = store.database.list() } }
     fun delete(id: Long) { viewModelScope.launch(Dispatchers.IO) {

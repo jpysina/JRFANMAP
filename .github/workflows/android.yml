@@ -99,20 +99,20 @@ jobs:
             rotation: 0
             snapshots: ''
           - profile: portrait
-            tests: jp.jrfanmap.RailScreenshotTest#capturePortraitForReview
+            tests: jp.jrfanmap.RailScreenshotTest#captureLivePortrait
             count: 1 test
             rotation: 0
-            snapshots: portrait-collapsed portrait-expanded
+            snapshots: live-portrait
           - profile: landscape
-            tests: jp.jrfanmap.RailScreenshotTest#captureLandscapeForReview
+            tests: jp.jrfanmap.RailScreenshotTest#captureLiveLandscape
             count: 1 test
             rotation: 1
-            snapshots: landscape-expanded
-          - profile: live
-            tests: jp.jrfanmap.RailScreenshotTest#captureLiveForReview
+            snapshots: live-landscape
+          - profile: history
+            tests: jp.jrfanmap.RailScreenshotTest#captureHistory
             count: 1 test
             rotation: 0
-            snapshots: portrait-live
+            snapshots: trip-speed-history
     steps:
       - name: Enable Android hardware acceleration
         id: kvm

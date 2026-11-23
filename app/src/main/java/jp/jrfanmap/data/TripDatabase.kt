@@ -7,6 +7,10 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.io.OutputStream
 
 data class Trip(val id: Long, val start: Long, val end: Long?, val points: Int, val distance: Double, val interrupted: Boolean)
+data class TripSpeedBucket(val firstTime: Long, val lastTime: Long, val meanKmh: Float, val maxKmh: Float)
+data class TripSpeedHistory(val start: Long, val end: Long, val buckets: List<TripSpeedBucket>) {
+    val peakKmh: Float get() = buckets.maxOfOrNull { it.maxKmh } ?: 0f
+}
 
 class TripDatabase(context: Context) : SQLiteOpenHelper(context, "trips.db", null, 1) {
     override fun onCreate(db: SQLiteDatabase) {
@@ -31,6 +35,28 @@ class TripDatabase(context: Context) : SQLiteOpenHelper(context, "trips.db", nul
     @Synchronized fun delete(id: Long) { writableDatabase.beginTransaction(); try {
         writableDatabase.delete("fixes", "trip=?", arrayOf(id.toString())); writableDatabase.delete("trips", "id=?", arrayOf(id.toString())); writableDatabase.setTransactionSuccessful()
     } finally { writableDatabase.endTransaction() } }
+
+    @Synchronized fun speedHistory(id: Long): TripSpeedHistory? {
+        val db = readableDatabase
+        val selection = arrayOf(id.toString())
+        val (start, end) = db.rawQuery("SELECT MIN(time), MAX(time) FROM fixes WHERE trip=?", selection).use { cursor ->
+            if (!cursor.moveToFirst() || cursor.isNull(0)) return null
+            cursor.getLong(0) to cursor.getLong(1)
+        }
+        val window = ((end - start) / 360 + 1).coerceAtLeast(1_000)
+        val buckets = db.rawQuery("""
+            SELECT MIN(time), MAX(time), AVG(speed), MAX(speed) FROM fixes
+            WHERE time BETWEEN ? AND ? AND trip=? AND mock=0 AND speed BETWEEN 0 AND 180
+            GROUP BY (time - ?) / ? ORDER BY MIN(time)
+        """.trimIndent(), arrayOf(start.toString(), end.toString(), id.toString(), start.toString(), window.toString())).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(TripSpeedBucket(cursor.getLong(0), cursor.getLong(1),
+                    cursor.getFloat(2) * 3.6f, cursor.getFloat(3) * 3.6f))
+            }
+        }
+        return TripSpeedHistory(start, end, buckets)
+    }
+
     @Synchronized fun exportCsv(id: Long, output: OutputStream) {
         output.bufferedWriter().use { w ->
             w.appendLine("timestamp_utc_ms,latitude,longitude,altitude_wgs84_m,speed_mps,accuracy_m,bearing_deg,provider,mock")

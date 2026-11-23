@@ -6,14 +6,23 @@ import android.graphics.Color
 import android.os.SystemClock
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
+import jp.jrfanmap.data.Fix
+import jp.jrfanmap.rail.GeoPoint
+import jp.jrfanmap.rail.LiveMatch
+import jp.jrfanmap.rail.RailBounds
+import jp.jrfanmap.rail.TrackGraph
+import jp.jrfanmap.ui.RailViewModel
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.min
+import kotlin.math.sin
 
 @RunWith(AndroidJUnit4::class)
 class RailScreenshotTest {
@@ -21,128 +30,119 @@ class RailScreenshotTest {
         Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
     @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
 
-    @Test fun capturePortraitForReview() {
-        val store = (compose.activity.application as RailApplication).store
-        assertTrue(store.catalog.prepare().lines > 500)
-        compose.onNodeWithTag("tab-2").performClick()
-        openLineForReview()
-        awaitShinjukuMap(highlighted = true)
-        assertPanelAreaBelow(.10f)
-        takeReviewScreenshot("portrait-collapsed")
-        compose.onNodeWithTag("rail-info-expand").performClick()
-        awaitStationRows()
-        assertPanelAreaBelow(.23f)
-        takeReviewScreenshot("portrait-expanded")
-        compose.onNodeWithTag("reverse-stations").performClick()
-        compose.onNodeWithText("田端 → 品川").assertIsDisplayed()
-        compose.onNodeWithText("国土交通省数据来源 ↗").performScrollTo().assertIsDisplayed()
+    @Test fun captureLivePortrait() {
+        val simulate = prepareInterval()
+        capture("live-portrait")
+        compose.onNodeWithTag("live-station-details").performClick()
+        compose.waitUntil(12_000) { compose.onAllNodesWithTag("rail-station-row").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("站点名录").assertIsDisplayed()
+        compose.onNodeWithTag("rail-info-close").performClick()
+        simulate(20_000)
+        compose.onNodeWithTag("live-segment-progress").assertDoesNotExist()
+        compose.onNodeWithText("定位已过期").assertIsDisplayed()
     }
 
-    @Test fun captureLiveForReview() {
-        val store = (compose.activity.application as RailApplication).store
-        assertTrue(store.catalog.prepare().lines > 500)
-        compose.onNodeWithTag("live-page").assertIsDisplayed()
+    @Test fun captureLiveLandscape() {
+        prepareInterval()
+        val page = compose.onNodeWithTag("live-page").fetchSemanticsNode().boundsInRoot
+        assertTrue(page.width > page.height)
+        capture("live-landscape")
+    }
+
+    @Test fun captureHistory() {
+        val db = (compose.activity.application as RailApplication).store.database
+        val id = db.begin()
+        try {
+            val start = System.currentTimeMillis() - 1_000_000
+            repeat(180) { index ->
+                val stage = (index % 90) / 90f
+                val ramp = min(stage / .23f, (1 - stage) / .26f).coerceIn(0f, 1f)
+                val speed = ramp * (72f + sin(index * .29f) * 3f)
+                db.add(id, Fix(35.68, 139.76, null, speed, null, null, 4f, null, "gps",
+                    start + index * 5_000L + if (index >= 90) 60_000 else 0L, index * 5_000_000_000L), speed * 5.0)
+            }
+            db.finish(id)
+            compose.onNodeWithTag("tab-3").performClick()
+            compose.waitUntil(15_000) { compose.onAllNodesWithText("速度曲线").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("速度曲线").performClick()
+            compose.waitUntil(12_000) { compose.onAllNodesWithTag("trip-speed-plot").fetchSemanticsNodes().isNotEmpty() }
+            capture("trip-speed-history")
+        } finally {
+            db.delete(id)
+        }
+    }
+
+    /** The screenshots use an actual catalog segment and a controlled GPS observation. */
+    private fun prepareInterval(): (Long) -> Unit {
+        val activity = compose.activity
+        val app = activity.application as RailApplication
+        val store = app.store
+        store.catalog.prepare()
+        lateinit var model: RailViewModel
+        compose.runOnIdle {
+            model = ViewModelProvider(activity)[RailViewModel::class.java]
+            store.monitor.visible(false)
+        }
+        compose.waitUntil(20_000) { model.catalog.value.info != null }
         compose.onNodeWithText("全屏").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() }
-        awaitShinjukuMap(highlighted = false)
-        val status = compose.onNodeWithText("LIVE ·", substring = true).fetchSemanticsNode().boundsInRoot
-        val preview = compose.onNodeWithTag("map-preview-shinjuku").fetchSemanticsNode().boundsInRoot
-        assertTrue("Location labels do not overlap", status.bottom <= preview.top)
-        takeReviewScreenshot("portrait-live")
-    }
-
-    @Test fun captureLandscapeForReview() {
-        val store = (compose.activity.application as RailApplication).store
-        assertTrue(store.catalog.prepare().lines > 500)
-        compose.onNodeWithTag("tab-2").performClick()
-        compose.waitUntil(20_000) {
-            compose.onAllNodesWithTag("map-page").fetchSemanticsNodes().singleOrNull()?.boundsInRoot?.let {
-                it.width > it.height
-            } == true
+        val network = store.catalog.sections(RailBounds(139.75, 35.64, 139.77, 35.68)).map { it.lineId }.distinct()
+            .firstNotNullOf { id -> store.catalog.network(id)?.takeIf { it.line.name == "東海道新幹線" } }
+        val position = GeoPoint(139.75805, 35.65750)
+        val along = TrackGraph(network).ahead(GeoPoint(139.75834, 35.65940), position)
+        val interval = checkNotNull(along.interval)
+        check(interval.previous.station.name == "東京" && interval.next.station.name == "品川")
+        val simulate: (Long) -> Unit = { age ->
+            compose.runOnIdle {
+                val observed = SystemClock.elapsedRealtimeNanos() - age * 1_000_000
+                val fix = Fix(position.lat, position.lon, 11.0, 25f, 0.5f, 180f, 5f, null,
+                    "gps", System.currentTimeMillis() - age, observed)
+                store.update { it.copy(active = true, fix = fix, network = true) }
+                model.live.value = LiveMatch(network.line, along.reason, 2.0, along.stations, interval, observed)
+            }
         }
-        openLineForReview()
-        awaitShinjukuMap(highlighted = true)
-        compose.onNodeWithTag("rail-info-expand").performClick()
-        awaitStationRows()
-        assertPanelAreaBelow(.21f)
-        takeReviewScreenshot("landscape-expanded")
-    }
-
-    private fun awaitStationRows() {
-        compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-station-row").fetchSemanticsNodes().size > 2 }
-        compose.onNodeWithText("站点名录").assertIsDisplayed()
-        compose.onNodeWithText("品川 → 田端").assertIsDisplayed()
-        val visibleRows = compose.onAllNodesWithTag("rail-station-row").fetchSemanticsNodes()
-            .count { it.boundsInWindow.height > 16 }
-        assertTrue("The compact panel shows several rows ($visibleRows)", visibleRows >= 3)
-    }
-
-    private fun awaitShinjukuMap(highlighted: Boolean) {
-        try {
-            compose.waitUntil(30_000) { mapTilesAndRouteAreVisible(highlighted) }
-        } catch (error: ComposeTimeoutException) {
-            takeReviewScreenshot(if (highlighted) "map-diagnostic" else "portrait-live")
-            throw error
+        simulate(0)
+        compose.onNodeWithTag("live-speed").assertTextEquals("90")
+        compose.onNodeWithTag("live-segment-progress").assertIsDisplayed()
+        compose.onNodeWithText("下一经由站").assertIsDisplayed()
+        compose.waitUntil(25_000) {
+            simulate(0)
+            mapIsPainted()
         }
+        val card = compose.onNodeWithTag("live-interval-card").fetchSemanticsNode().boundsInRoot
+        val canvas = compose.onNodeWithTag("rail-map-ready").fetchSemanticsNode().boundsInRoot
+        assertTrue("The floating card keeps most of the map visible", card.width * card.height < canvas.width * canvas.height * .25f)
+        return simulate
     }
 
-    private fun mapTilesAndRouteAreVisible(highlighted: Boolean): Boolean {
-        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return false
-        var mapPixels = 0
-        var railPixels = 0
+    private fun mapIsPainted(): Boolean {
+        val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val image = ui.takeScreenshot() ?: return false
         try {
-            for (y in bitmap.height / 4 until bitmap.height * 3 / 4 step 4) {
-                for (x in bitmap.width / 5 until bitmap.width * 4 / 5 step 4) {
-                    val pixel = bitmap.getPixel(x, y)
-                    val (red, green, blue) = Triple(Color.red(pixel), Color.green(pixel), Color.blue(pixel))
-                    if (red > 234 && red == green && green == blue) mapPixels++
-                    if (highlighted && red > 229 && green in 135..185 && blue < 65) railPixels++
-                    if (!highlighted && red in 25..125 && green in 85..150 && blue - red >= 30) railPixels++
+            var light = 0
+            var route = 0
+            for (y in image.height / 5 until image.height * 3 / 5 step 4) {
+                for (x in image.width / 5 until image.width * 4 / 5 step 4) {
+                    val pixel = image.getPixel(x, y)
+                    val r = Color.red(pixel)
+                    val g = Color.green(pixel)
+                    val b = Color.blue(pixel)
+                    if (r > 233 && r == g && g == b) light++
+                    if (r > 229 && g in 135..185 && b < 65) route++
                 }
             }
-            return mapPixels > 500 && railPixels > 20
-        } finally {
-            bitmap.recycle()
-        }
+            return light > 500 && route > 12
+        } finally { image.recycle() }
     }
 
-    private fun assertPanelAreaBelow(maximum: Float) {
-        val panel = compose.onNodeWithTag("rail-info-panel").fetchSemanticsNode().boundsInRoot
-        val map = compose.onNodeWithTag("rail-map-ready").fetchSemanticsNode().boundsInRoot
-        val ratio = (panel.width * panel.height) / (map.width * map.height)
-        println("Rail panel covers ${ratio * 100}% of the map")
-        assertTrue("Panel area $ratio is below $maximum", ratio < maximum)
-    }
-
-    private fun openLineForReview() {
-        compose.waitUntil(20_000) {
-            compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() &&
-                compose.onAllNodesWithTag("map-preview-shinjuku").fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onNodeWithTag("rail-map-ready").performTouchInput { click(center) }
-        compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-info-expand").fetchSemanticsNodes().isNotEmpty() }
-        val choices = compose.onAllNodesWithTag("rail-choice")
-        if (choices.fetchSemanticsNodes().isNotEmpty()) {
-            val yamanote = compose.onAllNodesWithText("山手線")
-            val choice = if (yamanote.fetchSemanticsNodes().isNotEmpty()) yamanote.onFirst() else choices.onFirst()
-            choice.performScrollTo().performClick()
-            compose.waitUntil(15_000) { compose.onAllNodesWithTag("rail-info-expand").fetchSemanticsNodes().isNotEmpty() }
-        }
-        compose.onNodeWithTag("rail-info-panel").assertIsDisplayed()
-    }
-
-    private fun takeReviewScreenshot(name: String) {
+    private fun capture(name: String) {
         compose.waitForIdle()
         SystemClock.sleep(400)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val destination = File(instrumentation.targetContext.filesDir, "ui-screenshots")
-        destination.mkdirs()
-        val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        val folder = File(instrumentation.targetContext.filesDir, "ui-screenshots").apply { mkdirs() }
+        val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
         try {
-            File(destination, "$name.png").outputStream().use { output ->
-                assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, output))
-            }
-        } finally { screenshot.recycle() }
+            File(folder, "$name.png").outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        } finally { bitmap.recycle() }
     }
-
 }

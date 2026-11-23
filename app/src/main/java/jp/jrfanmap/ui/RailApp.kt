@@ -42,7 +42,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.*
 
-private fun Number?.fmt(decimals: Int = 1) = this?.let { String.format(Locale.US, "%.${decimals}f", it.toDouble()) } ?: "—"
+internal fun Number?.fmt(decimals: Int = 1) = this?.let { String.format(Locale.US, "%.${decimals}f", it.toDouble()) } ?: "—"
 private fun time(value: Long?) = value?.let { SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(it)) } ?: "—"
 
 @Composable
@@ -103,20 +103,28 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
 @Composable private fun LivePage(model: RailViewModel, catalog: CatalogState, t: Telemetry,
                                  match: LiveMatch, now: Long, fresh: Boolean, immersive: Boolean,
                                  onRecord: () -> Unit, onPermission: () -> Unit, toggleImmersive: () -> Unit) {
-    val context = LocalContext.current
     val fix = t.fix.takeIf { fresh }
-    val line = match.line.takeIf { fresh && fix?.mock != true }
-    val ahead = if (line == null) emptyList() else match.next.take(4)
-    val speed = fix?.speedMps?.times(3.6f)
+    val currentMatch = match.takeIf {
+        fix?.provider == "gps" && !fix.mock && it.observedAtNanos?.let { observed ->
+            now - observed <= FixPolicy.STALE_SECONDS * 1_000_000_000L
+        } == true
+    }
+    val line = currentMatch?.line
+    val ahead = currentMatch?.next?.take(4).orEmpty()
     val status = when {
-        fresh && fix?.mock == true -> "模拟定位"
-        fresh -> fix?.provider?.uppercase(Locale.ROOT) ?: "定位有效"
+        fix?.mock == true -> "模拟定位"
+        fix?.speedMps?.let { it.isFinite() && it >= 0 } == true && fix.provider == "gps" -> "GPS 实测"
+        fix != null -> "${fix.provider.uppercase(Locale.ROOT)} · 等待测速"
         t.active && t.fix != null -> "定位已过期"
         else -> t.message
     }
+    val reason = when {
+        fix == null -> "等待新的定位观测"
+        fix.mock -> "模拟定位仅展示读数"
+        currentMatch == null && match.line != null -> "等待重新确认线路"
+        else -> match.reason
+    }
     var follow by rememberSaveable { mutableStateOf(true) }
-    var showStops by rememberSaveable { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
     var selection by remember { mutableStateOf(RailSelectionState()) }
     var preview by remember { mutableStateOf(false) }
     val handle = remember { MapHandle() }
@@ -124,115 +132,52 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
 
     BoxWithConstraints(Modifier.fillMaxSize().testTag("live-page")) {
         val wide = maxWidth > maxHeight && maxWidth >= 490.dp
-        val overlayHeight = maxHeight * (if (wide) .54f else .29f)
+        val cardWidth = if (wide) (maxWidth * .42f).coerceAtMost(306.dp) else (maxWidth - 20.dp).coerceAtMost(326.dp)
         RailMap(fix, t.path, follow, handle, MapBase.PALE, t.network, offline.regions, catalog.info?.year ?: 0,
             model::visibleRail, onLines = { selection = RailSelectionState(lines = it) },
             onStation = { selection = RailSelectionState(station = it) },
             onShinjukuPreview = { preview = it }, onEmptyTap = { selection = RailSelectionState() },
             modifier = Modifier.fillMaxSize(), highlightedLine = selection.lineId ?: line?.id,
             ahead = ahead.takeIf { selection.lineId == null || selection.lineId == line?.id }.orEmpty(),
-            onGesture = { follow = false }, onError = { error = it })
+            onGesture = { follow = false }, onError = { model.message.value = it })
 
-        Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(9.dp),
+        Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(10.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Top) {
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Surface(shape = Cut, color = Ink.copy(alpha = .93f)) {
-                    Text("LIVE · " + status, Modifier.widthIn(max = 145.dp).padding(horizontal = 8.dp, vertical = 5.dp),
-                        color = if (fresh) Signal else Color(0xFFFFCF94), fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2,
-                        overflow = TextOverflow.Ellipsis)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Surface(shape = Cut, color = DisplayPanel.copy(alpha = .94f)) {
+                    Row(Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(5.dp).background(if (fix == null) Color(0xFFFFBA81) else DisplayCyan, Cut))
+                        Text(status, Modifier.widthIn(max = 122.dp).testTag("live-location-status"),
+                            color = DisplayText, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2,
+                            overflow = TextOverflow.Ellipsis)
+                    }
                 }
                 if (preview) PreviewCaption(Modifier)
             }
             Spacer(Modifier.weight(1f))
-            Surface(shape = Cut, color = Panel, shadowElevation = 2.dp) {
-                TextButton(onClick = { follow = true }, contentPadding = PaddingValues(horizontal = 10.dp)) {
-                    Text(if (follow) "跟随中" else "回到位置")
+            Surface(shape = Cut, color = DisplayPanel.copy(alpha = .94f), shadowElevation = 2.dp) {
+                TextButton(onClick = { follow = true }, contentPadding = PaddingValues(horizontal = 8.dp),
+                    colors = ButtonDefaults.textButtonColors(contentColor = if (follow) DisplayCyan else DisplayText)) {
+                    Text(if (follow) "跟随中" else "回到位置", fontSize = 12.sp)
                 }
             }
-            Surface(shape = Cut, color = Panel, shadowElevation = 2.dp) {
-                TextButton(onClick = toggleImmersive, contentPadding = PaddingValues(horizontal = 10.dp)) {
-                    Text(if (immersive) "退出全屏" else "全屏")
+            Surface(shape = Cut, color = DisplayPanel.copy(alpha = .94f), shadowElevation = 2.dp) {
+                TextButton(onClick = toggleImmersive, contentPadding = PaddingValues(horizontal = 8.dp),
+                    colors = ButtonDefaults.textButtonColors(contentColor = DisplayText)) {
+                    Text(if (immersive) "退出全屏" else "全屏", fontSize = 12.sp)
                 }
             }
         }
 
-        if (selection.isEmpty) Column(Modifier.align(Alignment.BottomStart).padding(start = 10.dp, end = 10.dp, bottom = 30.dp)
-            .then(if (wide) Modifier.width((maxWidth * .38f).coerceAtMost(278.dp)) else Modifier.widthIn(max = 310.dp).fillMaxWidth())
-            .heightIn(max = overlayHeight.coerceAtLeast(100.dp)).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Surface(shape = Cut, color = Ink.copy(alpha = .93f), shadowElevation = 2.dp) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(speed.fmt(0), color = Signal, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 29.sp)
-                        Text("km/h", color = Metal, fontSize = 12.sp)
-                        Spacer(Modifier.weight(1f))
-                        Column {
-                            Text(fix?.bearing?.let { "真北 ${it.fmt(0)}°" } ?: "真北 —", color = Color.White, fontSize = 12.sp)
-                            Text(fix?.accuracy?.let { "±${it.fmt(0)} m" } ?: "精度 —", color = Metal, fontSize = 11.sp)
-                        }
-                        TextButton(onClick = onRecord, modifier = Modifier.testTag("record-button"),
-                            colors = ButtonDefaults.textButtonColors(contentColor = Signal),
-                            contentPadding = PaddingValues(horizontal = 6.dp)) { Text(if (t.recording) "保存" else "记录") }
-                    }
-                    if (fix == null && !t.active) {
-                        TextButton(onClick = onPermission, colors = ButtonDefaults.textButtonColors(contentColor = Signal)) { Text("定位设置") }
-                    } else if (t.fix != null) {
-                        Text("定位 ${FixPolicy.ageSeconds(t.fix, now)} 秒前" +
-                            if (t.recording) " · 记录中 ${(t.distanceM / 1000).fmt(2)} km" else "",
-                            color = Metal, fontSize = 11.sp)
-                    }
-                }
-            }
-            Surface(shape = Cut, color = Panel.copy(alpha = .92f), shadowElevation = 2.dp) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(line?.name ?: "线路待确认", fontWeight = FontWeight.Bold, maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            if (line != null) {
-                                Text(line.operator + " · 设备推断", color = Muted, fontSize = 11.sp)
-                            } else Text(if (fresh) match.reason else "等待新的定位观测", color = Muted, fontSize = 11.sp)
-                        }
-                        if (line != null) {
-                            TextButton(onClick = { selection = RailSelectionState(lines = listOf(line.id)) },
-                                contentPadding = PaddingValues(horizontal = 8.dp)) { Text("线路资料") }
-                        }
-                        if (ahead.isNotEmpty()) {
-                            TextButton(onClick = { showStops = !showStops },
-                                contentPadding = PaddingValues(horizontal = 8.dp)) { Text(if (showStops) "收起" else "站序") }
-                        }
-                    }
-                    if (showStops && ahead.isNotEmpty()) {
-                        HorizontalDivider(color = Grid)
-                        Text("前方站序 · 沿轨推断", color = Mint, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
-                        ahead.forEachIndexed { index, station ->
-                            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(if (index == 0) "●" else "○", color = Mint, fontSize = 11.sp)
-                                Text(station.station.name, Modifier.weight(1f), fontWeight = if (index == 0) FontWeight.Bold else FontWeight.Normal)
-                                Text(if (station.meters < 1000) "${station.meters.fmt(0)} m" else "${(station.meters / 1000).fmt()} km",
-                                    color = Muted, fontFamily = Mono, fontSize = 12.sp)
-                            }
-                        }
-                    } else if (ahead.isNotEmpty()) {
-                        val next = ahead.first()
-                        val distance = if (next.meters < 1000) "${next.meters.fmt(0)} m" else "${(next.meters / 1000).fmt()} km"
-                        Text("前方 ${next.station.name} · $distance", color = Muted, fontSize = 12.sp,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 2.dp))
-                    } else if (line != null) {
-                        Text(match.reason, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 4.dp))
-                    }
-                }
-            }
-            if (error.isNotBlank()) Surface(shape = Cut, color = Panel) {
-                Text(error, Modifier.padding(8.dp), color = Amber, fontSize = 11.sp)
-            }
-        }
+        if (selection.isEmpty) LiveIntervalCard(t, fix, currentMatch, reason, onRecord, onPermission,
+            onDetails = line?.let { { selection = RailSelectionState(lines = listOf(it.id), openDetails = true) } },
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 29.dp).width(cardWidth))
         Surface(Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp), color = Ink.copy(alpha = .86f), shape = Cut) {
             Text("国土交通省・国土地理院", Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                 color = Color.White, fontSize = 9.sp, lineHeight = 12.sp)
         }
-        RailSelection(model, selection, match.takeIf { line != null }) { selection = it }
+        RailSelection(model, selection, currentMatch) { selection = it }
     }
 }
 
@@ -439,7 +384,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
 }
 
 private data class RailSelectionState(val lines: List<Long> = emptyList(), val station: String? = null,
-                                      val lineId: Long? = lines.singleOrNull()) {
+                                      val lineId: Long? = lines.singleOrNull(), val openDetails: Boolean = false) {
     val isEmpty: Boolean get() = lines.isEmpty() && station == null
 }
 
@@ -453,7 +398,7 @@ private data class RailSelectionState(val lines: List<Long> = emptyList(), val s
     var choices by remember(selectedIds) { mutableStateOf<List<RailLine>?>(null) }
     var line by remember(picked, selectedIds) { mutableStateOf<RailNetwork?>(null) }
     var unavailable by remember(selectedIds, picked) { mutableStateOf(false) }
-    var expanded by remember(selectedIds, picked, stationName) { mutableStateOf(false) }
+    var expanded by remember(selectedIds, picked, stationName) { mutableStateOf(selection.openDetails) }
     LaunchedEffect(selectedIds) {
         if (selectedIds.isEmpty()) return@LaunchedEffect
         try {
@@ -694,6 +639,7 @@ private fun open(context: android.content.Context, url: String) {
 @Composable private fun History(model: RailViewModel, onExport: (Long) -> Unit, onLive: () -> Unit) {
     val trips by model.history.collectAsStateWithLifecycle()
     var deleting by remember { mutableStateOf<Trip?>(null) }
+    var chartTrip by rememberSaveable { mutableStateOf<Long?>(null) }
     LazyColumn(Modifier.fillMaxSize().testTag("history-page").padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(top = 14.dp, bottom = 20.dp)) {
         item { PageHead("行程记录", 3) { Text("${trips.size} 次", color = Muted, fontFamily = Mono) } }
         item { Text("轨迹仅存本机，不上传到交通服务。CSV 含精确位置，请自行选择分享对象。", color = Muted, fontSize = 12.sp) }
@@ -710,7 +656,14 @@ private fun open(context: android.content.Context, url: String) {
             Text(time(trip.start), style = MaterialTheme.typography.titleMedium)
             Text("${(trip.distance / 1000).fmt(2)} km   ·   ${trip.points} 个定位点", fontFamily = FontFamily.Monospace, color = Mint)
             Text(if (trip.end == null) "记录中" else "结束：${time(trip.end)}${if (trip.interrupted) " · 上次意外中断" else ""}", color = Muted, fontSize = 12.sp)
-            Row { TextButton(onClick = { onExport(trip.id) }, enabled = trip.end != null) { Text("导出 CSV") }; TextButton(onClick = { deleting = trip }, enabled = trip.end != null) { Text("删除", color = Amber) } }
+            if (chartTrip == trip.id) TripSpeedChart(model, trip)
+            Row {
+                TextButton(onClick = { chartTrip = if (chartTrip == trip.id) null else trip.id }, enabled = trip.end != null) {
+                    Text(if (chartTrip == trip.id) "收起曲线" else "速度曲线")
+                }
+                TextButton(onClick = { onExport(trip.id) }, enabled = trip.end != null) { Text("导出 CSV") }
+                TextButton(onClick = { deleting = trip }, enabled = trip.end != null) { Text("删除", color = Amber) }
+            }
         } }
     }
     deleting?.let { trip -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("删除此行程？") }, text = { Text("本机的定位记录将被永久删除。") }, confirmButton = { TextButton(onClick = { model.delete(trip.id); deleting = null }) { Text("删除") } }, dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } }) }

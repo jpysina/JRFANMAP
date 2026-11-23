@@ -22,8 +22,18 @@ class LineMatcherTest {
     @Test fun nextStationsAreOrderedInDirectionOfTravel() {
         val graph = TrackGraph(RailNetwork(line, listOf(RailSection(1, listOf(point(0), point(400), point(800)))),
             listOf(RailStation("東京", point(100)), RailStation("神田", point(500)), RailStation("秋葉原", point(740)))))
-        assertEquals(listOf("神田", "秋葉原"), graph.ahead(point(190), point(300)).stations.map { it.station.name })
-        assertEquals(listOf("東京"), graph.ahead(point(390), point(300)).stations.map { it.station.name })
+        val east = graph.ahead(point(190), point(300))
+        val west = graph.ahead(point(390), point(300))
+        assertEquals(listOf("神田", "秋葉原"), east.stations.map { it.station.name })
+        assertEquals(listOf("東京"), west.stations.map { it.station.name })
+        assertEquals("東京", east.interval?.previous?.station?.name)
+        assertEquals("神田", east.interval?.next?.station?.name)
+        assertEquals("神田", west.interval?.previous?.station?.name)
+        assertEquals("東京", west.interval?.next?.station?.name)
+        assertEquals(.5f, checkNotNull(east.interval).progress, .001f)
+        val approaching = checkNotNull(graph.ahead(point(390), point(495)).interval)
+        assertEquals("神田", approaching.next.station.name)
+        assertTrue(approaching.progress > .98f)
     }
 
     @Test fun neverSelectsAnUnobservedBranchOrDisconnectedSection() {
@@ -36,6 +46,7 @@ class LineMatcherTest {
         val result = graph.ahead(point(90), point(200))
         assertTrue(result.reason.contains("分岔"))
         assertEquals(listOf("分岐前"), result.stations.map { it.station.name })
+        assertNull(result.interval)
     }
 
     @Test fun bundledTokaidoStationsFollowTheRealGeometry() {
@@ -43,6 +54,7 @@ class LineMatcherTest {
         assertTrue(graph.network.stations.any { it.name == "品川" })
         val next = graph.ahead(GeoPoint(139.75834, 35.65940), GeoPoint(139.75805, 35.65750))
         assertEquals("品川", next.stations.firstOrNull()?.station?.name)
+        assertEquals("東京", next.interval?.previous?.station?.name)
     }
 
     @Test fun bundledYamanoteBrowsingFollowsTheRegisteredTrack() {

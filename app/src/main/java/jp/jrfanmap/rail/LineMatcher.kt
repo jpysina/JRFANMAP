@@ -6,11 +6,17 @@ import java.util.PriorityQueue
 import kotlin.math.*
 
 data class AheadStation(val station: RailStation, val meters: Double)
+data class StationInterval(val previous: AheadStation, val next: AheadStation) {
+    val progress: Float get() = (previous.meters / (previous.meters + next.meters)).toFloat()
+}
+
 data class LiveMatch(
     val line: RailLine? = null,
     val reason: String = "等待精确 GPS 与连续位移",
     val offsetMeters: Double? = null,
-    val next: List<AheadStation> = emptyList()
+    val next: List<AheadStation> = emptyList(),
+    val interval: StationInterval? = null,
+    val observedAtNanos: Long? = null
 )
 
 private const val METERS_PER_DEGREE = 111_195.0
@@ -96,7 +102,7 @@ class LineMatcher(private val catalog: RailCatalog) {
         val selected = graph ?: catalog.network(best.id)?.let(::TrackGraph)?.also { graph = it }
             ?: return uncertain("线路资料暂不可用")
         val ahead = selected.ahead(previous.point(), current.point())
-        return LiveMatch(selected.network.line, ahead.reason, best.offset, ahead.stations)
+        return LiveMatch(selected.network.line, ahead.reason, best.offset, ahead.stations, ahead.interval, current.elapsedNanos)
     }
 
     private fun uncertain(reason: String): LiveMatch {
@@ -112,7 +118,8 @@ internal class TrackGraph(val network: RailNetwork) {
     private data class QueueNode(val id: Int, val meters: Double)
     private data class Search(val distances: DoubleArray, val previous: Array<Edge?>)
     private data class RouteEdge(val from: Int, val to: Int, val meters: Double, val start: Double)
-    data class Forward(val reason: String, val stations: List<AheadStation> = emptyList())
+    data class Forward(val reason: String, val stations: List<AheadStation> = emptyList(), val interval: StationInterval? = null)
+    private data class Traversal(val stations: List<AheadStation>, val branch: Boolean)
 
     private val points = mutableListOf<GeoPoint>()
     private val buckets = mutableMapOf<Pair<Int, Int>, MutableList<Int>>()
@@ -225,47 +232,49 @@ internal class TrackGraph(val network: RailNetwork) {
         val alignment = (dx * east(a, b) + dy * north(a, b)) / (hypot(dx, dy) * edge.meters)
         if (!alignment.isFinite() || abs(alignment) < 0.55) return Forward("方向不明确，暂停站点推断")
         val forward = alignment > 0
-        val origin = if (forward) edge.b else edge.a
-        val initialDistance = edge.meters * (if (forward) 1 - projection.t else projection.t)
-        val result = mutableListOf<AheadStation>()
-        fun add(station: RailStation, meters: Double) {
-            if (meters > 30 && meters <= 50_000) result.add(AheadStation(station, meters))
-        }
-        stationsByEdge[edge].orEmpty().forEach {
-            add(it.station, (it.fraction - projection.t) * edge.meters * if (forward) 1 else -1)
-        }
-        val queues = PriorityQueue(compareBy<QueueNode> { it.meters })
-        queues.add(QueueNode(origin, initialDistance))
-        val distances = mutableMapOf(origin to initialDistance)
-        var branch = false
-        while (queues.isNotEmpty()) {
-            val (id, traveled) = queues.remove()
-            if (traveled > 50_000 || traveled > distances.getValue(id)) continue
-            val unvisited = links[id].filter { next ->
-                next != edge && (if (next.a == id) next.b else next.a) !in distances
-            }
-            // Stop before unobserved route choices; geometry alone cannot select the branch.
-            // The immediate incoming node is already visited, so a choice means two new edges.
-            if (unvisited.size > 1) { branch = true; continue }
-            links[id].filter { it != edge }.forEach { next ->
-                val target = if (next.a == id) next.b else next.a
-                val candidate = traveled + next.meters
-                if (candidate < (distances[target] ?: Double.POSITIVE_INFINITY)) {
-                    stationsByEdge[next].orEmpty().forEach {
-                        add(it.station, traveled + next.meters * if (next.a == id) it.fraction else 1 - it.fraction)
-                    }
-                    distances[target] = candidate
-                    queues.add(QueueNode(target, candidate))
-                }
-            }
-        }
-        val next = result.sortedBy { it.meters }.distinctBy { it.station.name }
+        val traversal = trace(edge, projection.t, forward)
+        val next = traversal.stations.filter { it.meters > 30 }
+        val previousStop = trace(edge, projection.t, !forward, nearestOnly = true).stations.firstOrNull()
+        val nextStop = traversal.stations.firstOrNull()
+        val interval = if (previousStop != null && nextStop != null && previousStop.station.name != nextStop.station.name) {
+            StationInterval(previousStop, nextStop)
+        } else null
         val reason = when {
-            branch && next.isEmpty() -> "线路前方分岔，等待设备通过分岔点"
-            branch -> "仅显示分岔前的推断站点"
-            next.isEmpty() -> "前方无可确认的相连站点"
+            traversal.branch && next.isEmpty() -> "线路前方分岔，等待设备通过分岔点"
+            traversal.branch -> "仅显示分岔前的推断站点"
+            next.isEmpty() && interval == null -> "前方无可确认的相连站点"
             else -> "按行驶方向推断前方站点"
         }
-        return Forward(reason, next)
+        return Forward(reason, next, interval)
+    }
+
+    private fun trace(start: Edge, fraction: Double, forward: Boolean, nearestOnly: Boolean = false): Traversal {
+        var node = if (forward) start.b else start.a
+        var meters = start.meters * (if (forward) 1 - fraction else fraction)
+        var incoming = start
+        val visited = mutableSetOf(node)
+        val result = mutableListOf<AheadStation>()
+        fun add(station: RailStation, distance: Double) {
+            if (distance > 0 && distance <= 50_000) result.add(AheadStation(station, distance))
+        }
+        stationsByEdge[start].orEmpty().forEach {
+            add(it.station, (it.fraction - fraction) * start.meters * if (forward) 1 else -1)
+        }
+        var branch = false
+        while (meters <= 50_000 && (!nearestOnly || result.isEmpty())) {
+            val options = links[node].filter { it != start && it != incoming }
+            if (options.size > 1) { branch = true; break }
+            val edge = options.singleOrNull() ?: break
+            val fromA = edge.a == node
+            val target = if (fromA) edge.b else edge.a
+            if (!visited.add(target)) break
+            stationsByEdge[edge].orEmpty().forEach {
+                add(it.station, meters + edge.meters * if (fromA) it.fraction else 1 - it.fraction)
+            }
+            meters += edge.meters
+            incoming = edge
+            node = target
+        }
+        return Traversal(result.sortedBy { it.meters }.distinctBy { it.station.name }, branch)
     }
 }
