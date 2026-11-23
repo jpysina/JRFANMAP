@@ -1,8 +1,14 @@
 package jp.jrfanmap.ui
 
+import android.content.Context
 import android.graphics.Outline
+import android.graphics.RenderEffect
+import android.graphics.RuntimeShader
+import android.os.Build
 import android.view.View
 import android.view.ViewOutlineProvider
+import androidx.annotation.RequiresApi
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -12,6 +18,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,6 +36,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -47,22 +56,24 @@ import jp.jrfanmap.R
 import jp.jrfanmap.data.Fix
 import jp.jrfanmap.data.Telemetry
 import jp.jrfanmap.map.LATER_STATION_COLOR
+import jp.jrfanmap.map.NAVIGATION_INK
 import jp.jrfanmap.map.NEXT_STATION_COLOR
 import jp.jrfanmap.rail.AheadStation
 import jp.jrfanmap.rail.LiveMatch
 import jp.jrfanmap.rail.StationInterval
 import kotlin.math.ceil
 
-internal val DisplayPanel = Color(0xFF0C1923)
-internal val DisplayText = Color(0xFFF0F7F8)
-internal val DisplayMuted = Color(0xFF9DB6BC)
-internal val DisplayCyan = Color(0xFF61E4DC)
-internal val DisplayGrid = Color(0xFF304C57)
+internal val DisplayPanel = Color(NAVIGATION_INK)
+internal val DisplayText = Color(0xFFF4F6FD)
+internal val DisplayMuted = Color(0xFFB6C1D7)
+internal val DisplayCyan = Color(0xFF9BD9D0)
+internal val DisplayGrid = Color(0xFF444C6B)
 private val DisplayAccent = Color(NEXT_STATION_COLOR)
 private val StationAccent = Color(LATER_STATION_COLOR)
-private val DisplayShape = RoundedCornerShape(20.dp)
-private val DisplayRim = Brush.linearGradient(listOf(Color(0xB574B4C4), Color(0x4158869A), Color(0x94597999)))
-private val DisplayControl = Color(0xFF64E2E1).copy(alpha = .12f)
+private val HudRadius = 20.dp
+private val DisplayShape = RoundedCornerShape(HudRadius)
+private val DisplayRim = Brush.linearGradient(listOf(Color(0xB1C0CEEE), Color(0x386778A8), Color(0x796F88AF)))
+private val DisplayControl = Color(0x258BA5D4)
 private val DisplayDigits = FontFamily(Font(R.font.chakra_petch_semibold, FontWeight.SemiBold))
 
 @Composable
@@ -80,24 +91,24 @@ internal fun LiveIntervalCard(
         Box {
             if (glassTarget != null) HudBackdrop(glassTarget, Modifier.matchParentSize())
             Column(Modifier.fillMaxWidth().drawBehind {
-                val top = if (glassTarget != null) Color(0xA9183445) else Color(0xF9183445)
-                val bottom = if (glassTarget != null) Color(0xDB0B1726) else Color(0xFB0B1726)
+                val top = if (glassTarget != null) Color(0xB6262C48) else Color(0xF6262C48)
+                val bottom = if (glassTarget != null) Color(0xE113172C) else Color(0xFB13172C)
                 drawRect(Brush.verticalGradient(listOf(top, bottom)))
-                drawRect(Brush.radialGradient(listOf(Color(0x315CC2D8), Color.Transparent),
-                    center = Offset(size.width * .12f, 0f), radius = size.width * .72f))
-                drawLine(Brush.horizontalGradient(listOf(Color.Transparent, Color(0xC4A5F1FF), Color.Transparent)),
-                    Offset(size.width * .06f, 1.dp.toPx()), Offset(size.width * .94f, 1.dp.toPx()), 1.dp.toPx())
+                drawRect(Brush.radialGradient(listOf(Color(0x26869DE8), Color.Transparent),
+                    center = Offset(size.width * .16f, 0f), radius = size.width * .65f))
+                drawLine(Brush.horizontalGradient(listOf(Color.Transparent, Color(0xA5D6DEFF), Color.Transparent)),
+                    Offset(size.width * .05f, 1.dp.toPx()), Offset(size.width * .95f, 1.dp.toPx()), .8.dp.toPx())
             }.padding(start = 13.dp, end = 13.dp, bottom = 9.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.width(3.dp).height(16.dp).background(if (routeName != null) DisplayCyan else DisplayMuted, DisplayShape))
+                    Box(Modifier.width(3.dp).height(16.dp).background(if (routeName != null) StationAccent else DisplayMuted, DisplayShape))
                     Text(routeName ?: "线路待确认", Modifier.weight(1f).padding(start = 7.dp),
                         color = DisplayText, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 18.sp,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (onDetails != null) TextButton(onClick = onDetails, modifier = Modifier.testTag("live-station-details"),
-                        shape = Cut, colors = ButtonDefaults.textButtonColors(contentColor = DisplayCyan, containerColor = DisplayControl),
+                        shape = Cut, colors = ButtonDefaults.textButtonColors(contentColor = DisplayText, containerColor = DisplayControl),
                         contentPadding = PaddingValues(horizontal = 8.dp)) { Text("站序 ›", fontSize = 12.sp) }
                     TextButton(onClick = onRecord, modifier = Modifier.testTag("record-button"),
-                        colors = ButtonDefaults.textButtonColors(contentColor = if (telemetry.recording) Color(0xFFFFB2A0) else DisplayCyan),
+                        colors = ButtonDefaults.textButtonColors(contentColor = if (telemetry.recording) Color(0xFFFFB2A0) else DisplayMuted),
                         contentPadding = PaddingValues(horizontal = 7.dp)) {
                         Text(if (telemetry.recording) "保存" else "记录", fontSize = 12.sp)
                     }
@@ -105,14 +116,16 @@ internal fun LiveIntervalCard(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     VelocityReadout(speed, match?.line?.category == "1")
-                    if (upcoming != null) Surface(Modifier.weight(1f), shape = RoundedCornerShape(10.dp),
-                        color = Color(0xBF0C202B), border = BorderStroke(1.dp, Color(0x634B98A9))) {
-                        Column(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                            Text("下一经由站", color = DisplayCyan, fontSize = 10.sp, lineHeight = 13.sp)
+                    if (upcoming != null) Surface(Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
+                        color = Color.Transparent, border = BorderStroke(1.dp, DisplayAccent.copy(alpha = .31f))) {
+                        Column(Modifier.background(Brush.horizontalGradient(
+                            listOf(Color(0xF3263A3D), Color(0xE61D263A))))
+                            .padding(horizontal = 10.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                            Text("下一经由站", color = DisplayAccent, fontSize = 10.sp, lineHeight = 13.sp)
                             Text(upcoming.station.name, color = DisplayText, fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp, lineHeight = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(distanceLabel(upcoming.meters), color = DisplayCyan, fontFamily = DisplayDigits,
-                                fontWeight = FontWeight.SemiBold, fontSize = 12.sp, lineHeight = 14.sp,
+                                fontSize = 19.sp, lineHeight = 23.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(distanceLabel(upcoming.meters), color = DisplayMuted, fontFamily = DisplayDigits,
+                                fontWeight = FontWeight.SemiBold, fontSize = 13.sp, lineHeight = 15.sp,
                                 modifier = Modifier.testTag("live-next-distance"))
                         }
                     } else {
@@ -140,17 +153,97 @@ internal fun LiveIntervalCard(
 private fun HudBackdrop(target: BlurTarget, modifier: Modifier) {
     key(target) {
         AndroidView(factory = { context ->
-            BlurView(context).apply {
+            LiquidHudBackdrop(context).apply {
                 clipToOutline = true
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 outlineProvider = object : ViewOutlineProvider() {
                     override fun getOutline(view: View, outline: Outline) {
-                        outline.setRoundRect(0, 0, view.width, view.height, 20f * view.resources.displayMetrics.density)
+                        outline.setRoundRect(0, 0, view.width, view.height, HudRadius.value * view.resources.displayMetrics.density)
                     }
                 }
                 setupWith(target).setBlurRadius(16f)
             }
         }, modifier = modifier, onRelease = { it.setBlurEnabled(false) })
+    }
+}
+
+private class LiquidHudBackdrop(context: Context) : BlurView(context) {
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && width > 0 && height > 0 && isHardwareAccelerated) {
+            applyEdgeRefraction(width, height)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun applyEdgeRefraction(width: Int, height: Int) {
+        val density = resources.displayMetrics.density
+        val shader = RuntimeShader("""
+            uniform shader backdrop;
+            uniform float2 viewport;
+            uniform float radius;
+            uniform float lensWidth;
+
+            half4 main(float2 point) {
+                float2 middle = viewport * 0.5;
+                float2 position = point - middle;
+                float2 edge = abs(position) - (middle - radius);
+                float distanceToRim = length(max(edge, float2(0.0))) + min(max(edge.x, edge.y), 0.0) - radius;
+                float rim = smoothstep(-lensWidth, 0.0, distanceToRim);
+                float2 bend = position / max(middle, float2(1.0)) * rim * rim * lensWidth * 0.48;
+                return backdrop.eval(clamp(point - bend, float2(0.0), viewport - 1.0));
+            }
+        """.trimIndent())
+        shader.setFloatUniform("viewport", width.toFloat(), height.toFloat())
+        shader.setFloatUniform("radius", HudRadius.value * density)
+        shader.setFloatUniform("lensWidth", 12f * density)
+        setRenderEffect(RenderEffect.createRuntimeShaderEffect(shader, "backdrop"))
+    }
+}
+
+@Composable
+internal fun LiveMapControls(
+    following: Boolean, immersive: Boolean, onFollow: () -> Unit, onFullscreen: () -> Unit, modifier: Modifier = Modifier
+) {
+    val followTint by animateColorAsState(if (following) DisplayCyan else DisplayText, tween(170), label = "map follow tint")
+    Surface(modifier, color = DisplayPanel.copy(alpha = .88f), shape = RoundedCornerShape(17.dp),
+        border = BorderStroke(1.dp, StationAccent.copy(alpha = .29f)), shadowElevation = 4.dp) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            IconButton(onClick = onFollow, modifier = Modifier.semantics {
+                contentDescription = "回到位置"
+                stateDescription = if (following) "跟随中" else "自由浏览"
+            }) {
+                InstrumentIcon(1, followTint)
+            }
+            HorizontalDivider(Modifier.width(28.dp), color = DisplayGrid.copy(alpha = .9f))
+            IconButton(onClick = onFullscreen, modifier = Modifier.semantics {
+                contentDescription = if (immersive) "退出全屏" else "全屏"
+            }) {
+                Canvas(Modifier.size(20.dp)) {
+                    val outer = size.width * .15f
+                    val inner = size.width * .36f
+                    val corner = if (immersive) inner else outer
+                    val tip = if (immersive) outer else inner
+                    val farCorner = size.width - corner
+                    val farTip = size.width - tip
+                    val glyph = Path().apply {
+                        moveTo(corner, tip)
+                        lineTo(corner, corner)
+                        lineTo(tip, corner)
+                        moveTo(farTip, corner)
+                        lineTo(farCorner, corner)
+                        lineTo(farCorner, tip)
+                        moveTo(corner, farTip)
+                        lineTo(corner, farCorner)
+                        lineTo(tip, farCorner)
+                        moveTo(farTip, farCorner)
+                        lineTo(farCorner, farCorner)
+                        lineTo(farCorner, farTip)
+                    }
+                    drawPath(glyph, DisplayText, style = Stroke(width = 1.55.dp.toPx(), cap = StrokeCap.Round))
+                }
+            }
+        }
     }
 }
 
@@ -163,7 +256,7 @@ private fun VelocityReadout(speed: Float?, highSpeed: Boolean) {
     }
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(speed.fmt(0), fontFamily = DisplayDigits, fontWeight = FontWeight.SemiBold, color = DisplayAccent,
+            Text(speed.fmt(0), fontFamily = DisplayDigits, fontWeight = FontWeight.SemiBold, color = DisplayText,
                 fontSize = 44.sp, lineHeight = 45.sp, modifier = Modifier.testTag("live-speed"))
             Text("km/h", Modifier.padding(bottom = 4.dp), color = DisplayMuted, fontSize = 10.sp, lineHeight = 13.sp)
         }
@@ -179,7 +272,7 @@ private fun VelocityReadout(speed: Float?, highSpeed: Boolean) {
                     val barWidth = (step - gap).coerceAtLeast(0f)
                     drawRoundRect(DisplayGrid, corner, Size(barWidth, barHeight), radius)
                     val fill = (level * 12f - index).coerceIn(0f, 1f)
-                    if (fill > 0f) drawRoundRect(if (index < 8) DisplayCyan else DisplayAccent,
+                    if (fill > 0f) drawRoundRect(StationAccent,
                         corner, Size(barWidth * fill, barHeight), radius)
                 }
             }
@@ -217,7 +310,7 @@ private fun StationStrip(ahead: List<AheadStation>, interval: StationInterval?, 
                     lineTo(current - 4.dp.toPx(), 9.dp.toPx())
                     close()
                 }
-                drawPath(arrow, DisplayAccent)
+                drawPath(arrow, DisplayText)
             }
         }
         Row(Modifier.fillMaxWidth()) {

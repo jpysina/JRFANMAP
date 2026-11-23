@@ -93,7 +93,7 @@ class RailScreenshotTest {
             store.monitor.visible(false)
         }
         compose.waitUntil(20_000) { model.catalog.value.info != null }
-        compose.onNodeWithText("全屏").performClick()
+        compose.onNodeWithContentDescription("全屏").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() }
         val network = store.catalog.sections(RailBounds(139.69, 35.69, 139.71, 35.72)).map { it.lineId }.distinct()
             .firstNotNullOf { id -> store.catalog.network(id)?.takeIf { it.line.name == "山手線" && it.line.operator == "東日本旅客鉄道" } }
@@ -148,9 +148,9 @@ class RailScreenshotTest {
                     val g = Color.green(pixel)
                     val b = Color.blue(pixel)
                     // The navigation tiles draw major roads above the dark offline land color.
-                    if (r in 56..88 && g in 75..106 && b in 82..114 && b >= g && g - r in 17..28) roads++
-                    if (r > 229 && g in 135..185 && b < 65) route++
-                    if (x > image.width * 2 / 5 && r in 210..229 && g >= 243 && b in 145..180) nextStation++
+                    if (r in 80..89 && g in 86..99 && b in 111..125 && g - r in 6..13 && b - g in 22..31) roads++
+                    if (r > 235 && g in 174..195 && b in 100..123) route++
+                    if (x > image.width * 2 / 5 && r in 207..217 && g in 239..250 && b in 173..188) nextStation++
                 }
             }
             return (roads > 24) == checkRoads && route > 12 && nextStation > 8

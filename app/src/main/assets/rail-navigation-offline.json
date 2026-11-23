@@ -9,7 +9,7 @@
     }
   },
   "layers": [
-    {"id": "sea", "type": "background", "paint": {"background-color": "#102434"}},
-    {"id": "land", "type": "fill", "source": "land", "paint": {"fill-color": "#172632", "fill-outline-color": "#28404E"}}
+    {"id": "sea", "type": "background", "paint": {"background-color": "#152839"}},
+    {"id": "land", "type": "fill", "source": "land", "paint": {"fill-color": "#202338", "fill-opacity": 0.91, "fill-outline-color": "#364453"}}
   ]
 }

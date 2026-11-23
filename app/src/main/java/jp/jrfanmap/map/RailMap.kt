@@ -67,9 +67,11 @@ private const val SELECTED_STOPS = "selected-stations"
 private const val SELECTED_LABELS = "selected-station-labels"
 private const val AHEAD_SOURCE = "ahead-local"
 internal const val MAX_AHEAD_STOPS = 4
-internal const val NEXT_STATION_COLOR = 0xFFDEFBA5
-internal const val LATER_STATION_COLOR = 0xFF77D8D5
+internal const val NEXT_STATION_COLOR = 0xFFD4F5B4
+internal const val LATER_STATION_COLOR = 0xFFA6B9E1
+internal const val NAVIGATION_INK = 0xFF15182B
 private const val HIGHLIGHT_COLOR = "#F5A623"
+private const val NAVIGATION_HIGHLIGHT_COLOR = "#F6B772"
 private const val HIGHLIGHT_GLOW = "selected-rail-glow"
 private const val GSI_PALE = "https://cyberjapandata.gsi.go.jp/xyz/pale/"
 private const val GSI_RAIL_DETAIL = "gsi-rail-details"
@@ -221,27 +223,27 @@ fun RailMap(
             val empty = FeatureCollection.fromFeatures(emptyList<Feature>())
             style.addSource(GeoJsonSource("rail-local", empty))
             val selectedFilter = eq(get("railId"), "")
-            val trackColor = if (navigation) match(get("category"), literal("#75929C"),
-                stop("1", "#D298AA"), stop("2", "#74AFBD"), stop("3", "#8B9DC5"),
-                stop("4", "#9D91BC"), stop("5", "#C89F8E"))
+            val trackColor = if (navigation) match(get("category"), literal("#8C9CB5"),
+                stop("1", "#BE96AB"), stop("2", "#83A7B3"), stop("3", "#93A2CE"),
+                stop("4", "#A69BC8"), stop("5", "#B59A90"))
             else match(get("category"), literal("#4F6572"), stop("1", "#9B4960"),
                 stop("2", "#25677A"), stop("3", "#4E679A"), stop("4", "#79668B"), stop("5", "#895B45"))
-            style.addLayer(LineLayer(TRACK_CASING, "rail-local").withProperties(lineColor(if (navigation) "#111D28" else "#F7FAF8"),
+            style.addLayer(LineLayer(TRACK_CASING, "rail-local").withProperties(lineColor(if (navigation) "#111626" else "#F7FAF8"),
                 lineWidth(interpolate(linear(), zoom(), stop(5, 1.4), stop(12, 3.4), stop(17, 6.0))),
-                lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND), lineOpacity(.92f)))
+                lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND), lineOpacity(if (navigation) .55f else .92f)))
             style.addLayer(LineLayer(TRACKS, "rail-local").withProperties(lineColor(trackColor),
                 lineWidth(interpolate(linear(), zoom(), stop(5, .65), stop(12, 2.0), stop(17, 4.0))),
                 lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
             if (navigation) style.addLayer(LineLayer(HIGHLIGHT_GLOW, "rail-local").withFilter(selectedFilter)
-                .withProperties(lineColor(HIGHLIGHT_COLOR), lineOpacity(.38f), lineBlur(4f),
+                .withProperties(lineColor(NAVIGATION_HIGHLIGHT_COLOR), lineOpacity(.26f), lineBlur(4f),
                     lineWidth(interpolate(linear(), zoom(), stop(5, 5), stop(12, 10), stop(17, 16))),
                     lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
             style.addLayer(LineLayer(HIGHLIGHT_CASING, "rail-local").withFilter(selectedFilter)
-                .withProperties(lineColor(if (navigation) "#34251F" else "#254049"),
+                .withProperties(lineColor(if (navigation) "#503725" else "#254049"),
                     lineWidth(interpolate(linear(), zoom(), stop(5, 3.8), stop(12, 7.0), stop(17, 11.0))),
                     lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
             style.addLayer(LineLayer(HIGHLIGHT, "rail-local").withFilter(selectedFilter)
-                .withProperties(lineColor(HIGHLIGHT_COLOR),
+                .withProperties(lineColor(if (navigation) NAVIGATION_HIGHLIGHT_COLOR else HIGHLIGHT_COLOR),
                     lineWidth(interpolate(linear(), zoom(), stop(5, 2.0), stop(12, 4.4), stop(17, 7.5))),
                     lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
             style.addSource(GeoJsonSource(AHEAD_SOURCE, empty))
@@ -255,15 +257,15 @@ fun RailMap(
                 .withProperties(circleColor("#FFFBEE"), circleRadius(4f), circleStrokeColor("#81510A"), circleStrokeWidth(2f)))
             style.addLayer(SymbolLayer(SELECTED_LABELS, "stations-local").withFilter(selectedFilter).withProperties(
                 textField(get("station")), textFont(arrayOf("NotoSansCJKjp-Regular")), textSize(11f),
-                textColor(if (navigation) "#FFF1D1" else "#253D45"),
-                textHaloColor(if (navigation) "#16222C" else "#FFFBEE"), textHaloWidth(1.3f),
+                textColor(if (navigation) "#F6E8DA" else "#253D45"),
+                textHaloColor(if (navigation) "#1A2032" else "#FFFBEE"), textHaloWidth(1.3f),
                 textAnchor(Property.TEXT_ANCHOR_TOP),
                 textOffset(arrayOf(0f, if (navigation) 1f else .7f))).apply { minZoom = 12.5f })
             if (navigation) addAheadStationMarkers(style, context)
             style.addSource(GeoJsonSource("trip", empty))
             style.addLayer(LineLayer("trip-line", "trip").withProperties(lineColor("#EF8C78"), lineWidth(4f)))
             style.addSource(GeoJsonSource("device", empty))
-            style.addLayer(CircleLayer("device-dot", "device").withProperties(circleColor(if (navigation) "#16B8AA" else "#017D72"), circleRadius(7f),
+            style.addLayer(CircleLayer("device-dot", "device").withProperties(circleColor(if (navigation) "#67BCCD" else "#017D72"), circleRadius(7f),
                 circleStrokeColor("#FFFFFF"), circleStrokeWidth(3f)))
             loadedStyle = style
             viewport = instance.viewport()
@@ -293,7 +295,8 @@ fun RailMap(
             style.addSource(RasterSource(id, tiles, 256))
             val layer = RasterLayer(id, id).withProperties(rasterFadeDuration(0f))
             if (pale) layer.setProperties(rasterBrightnessMin(.28f), rasterSaturation(-.45f))
-            if (navigation) layer.setProperties(rasterBrightnessMax(.55f), rasterSaturation(-.76f), rasterOpacity(.75f))
+            if (navigation) layer.setProperties(rasterBrightnessMax(.49f), rasterSaturation(-.78f),
+                rasterOpacity(.70f), rasterHueRotate(13f))
             style.addLayerBelow(layer, TRACK_CASING)
         }
         fun addOnline() {
@@ -316,7 +319,7 @@ fun RailMap(
         style.getLayerAs<LineLayer>(HIGHLIGHT_GLOW)?.setFilter(filter)
         val opacity = when {
             highlightedLine == null -> .93f
-            navigation -> .53f
+            navigation -> .47f
             else -> .60f
         }
         style.getLayerAs<LineLayer>(TRACKS)?.setProperties(lineOpacity(opacity))
@@ -419,7 +422,7 @@ private fun addAheadStationMarkers(style: Style, context: Context) {
         textAlign = Paint.Align.CENTER
         textSize = 12 * metrics.density
     }
-    val background = 0xFF0C1923.toInt()
+    val background = NAVIGATION_INK.toInt()
     for (order in 1..MAX_AHEAD_STOPS) {
         val image = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply { density = metrics.densityDpi }
         val canvas = Canvas(image)
@@ -482,8 +485,8 @@ private fun addGsiRailDetails(style: Style, source: String = GSI_RAIL_DETAIL) {
         style.addLayerBelow(layer, if (navigation) HIGHLIGHT_GLOW else HIGHLIGHT_CASING)
     }
     layer("surface", all(not(underground), not(siding)), 13f, lineColor("#71858B"),
-        lineWidth(interpolate(linear(), zoom(), stop(13, .65), stop(16, 1.5))), lineOpacity(if (navigation) .56f else .82f))
+        lineWidth(interpolate(linear(), zoom(), stop(13, .65), stop(16, 1.5))), lineOpacity(if (navigation) .46f else .82f))
     layer("tunnel", underground, 13f, lineColor("#52677C"), lineWidth(1.25f),
-        lineDasharray(arrayOf(2.5f, 1.8f)), lineOpacity(.86f))
-    layer("siding", siding, 15f, lineColor("#77888C"), lineWidth(.85f), lineOpacity(.70f))
+        lineDasharray(arrayOf(2.5f, 1.8f)), lineOpacity(if (navigation) .52f else .86f))
+    layer("siding", siding, 15f, lineColor("#77888C"), lineWidth(.85f), lineOpacity(if (navigation) .39f else .70f))
 }

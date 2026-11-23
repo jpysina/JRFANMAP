@@ -142,34 +142,20 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
             ahead = ahead.takeIf { selection.lineId == null || selection.lineId == line?.id }.orEmpty(),
             onGesture = { follow = false }, frostedHud = true, onError = { model.message.value = it })
 
-        Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Top) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Surface(shape = Cut, color = DisplayPanel.copy(alpha = .94f)) {
-                    Row(Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(5.dp).background(if (fix == null) Color(0xFFFFBA81) else DisplayCyan, Cut))
-                        Text(status, Modifier.widthIn(max = 122.dp).testTag("live-location-status"),
-                            color = DisplayText, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2,
-                            overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                if (preview) PreviewCaption(Modifier)
-            }
-            Spacer(Modifier.weight(1f))
-            Surface(shape = Cut, color = DisplayPanel.copy(alpha = .94f), shadowElevation = 2.dp) {
-                TextButton(onClick = { follow = true }, contentPadding = PaddingValues(horizontal = 8.dp),
-                    colors = ButtonDefaults.textButtonColors(contentColor = if (follow) DisplayCyan else DisplayText)) {
-                    Text(if (follow) "跟随中" else "回到位置", fontSize = 12.sp)
+        Column(Modifier.align(Alignment.TopStart).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Surface(shape = Cut, color = DisplayPanel.copy(alpha = .90f)) {
+                Row(Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(5.dp).background(if (fix == null) Color(0xFFFFBA81) else DisplayCyan, Cut))
+                    Text(status, Modifier.widthIn(max = 122.dp).testTag("live-location-status"),
+                        color = DisplayText, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis)
                 }
             }
-            Surface(shape = Cut, color = DisplayPanel.copy(alpha = .94f), shadowElevation = 2.dp) {
-                TextButton(onClick = toggleImmersive, contentPadding = PaddingValues(horizontal = 8.dp),
-                    colors = ButtonDefaults.textButtonColors(contentColor = DisplayText)) {
-                    Text(if (immersive) "退出全屏" else "全屏", fontSize = 12.sp)
-                }
-            }
+            if (preview) PreviewCaption(Modifier)
         }
+        LiveMapControls(follow, immersive, { follow = true }, toggleImmersive,
+            Modifier.align(Alignment.TopEnd).padding(10.dp))
 
         if (selection.isEmpty) LiveIntervalCard(t, fix, currentMatch, ahead, reason, onRecord, onPermission,
             onDetails = line?.let { { selection = RailSelectionState(lines = listOf(it.id), openDetails = true) } },

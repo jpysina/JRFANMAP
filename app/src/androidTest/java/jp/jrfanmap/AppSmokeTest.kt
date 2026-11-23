@@ -32,9 +32,9 @@ class AppSmokeTest {
     @Test fun opensEachPageAndEntersImmersiveMode() {
         compose.onNodeWithTag("live-page").assertIsDisplayed()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("全屏").performClick()
+        compose.onNodeWithContentDescription("全屏").performClick()
         compose.onNodeWithTag("tab-0").assertDoesNotExist()
-        compose.onNodeWithText("退出全屏").performClick()
+        compose.onNodeWithContentDescription("退出全屏").performClick()
         listOf("gps-page", "map-page", "history-page", "data-page").forEachIndexed { index, page ->
             compose.onNodeWithTag("tab-${index + 1}").performClick()
             compose.onNodeWithTag(page).assertIsDisplayed()
