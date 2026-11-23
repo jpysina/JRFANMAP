@@ -54,6 +54,7 @@ class RailScreenshotTest {
 
     @Test fun captureHistory() {
         val db = (compose.activity.application as RailApplication).store.database
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() }
         val id = db.begin()
         try {
             val start = System.currentTimeMillis() - 1_000_000
