@@ -38,6 +38,9 @@ class RailScreenshotTest {
         compose.onNodeWithText("站点名录").assertIsDisplayed()
         compose.onNodeWithTag("rail-info-close").performClick()
         simulate(20_000)
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("定位已过期").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithTag("live-segment-progress").assertDoesNotExist()
         compose.onNodeWithText("定位已过期").assertIsDisplayed()
     }
@@ -109,6 +112,9 @@ class RailScreenshotTest {
             simulate(0)
             mapIsPainted()
         }
+        // Give neighboring raster tiles time to replace the lower-resolution placeholders.
+        SystemClock.sleep(2_500)
+        simulate(0)
         val card = compose.onNodeWithTag("live-interval-card").fetchSemanticsNode().boundsInRoot
         val canvas = compose.onNodeWithTag("rail-map-ready").fetchSemanticsNode().boundsInRoot
         assertTrue("The floating card keeps most of the map visible", card.width * card.height < canvas.width * canvas.height * .25f)
