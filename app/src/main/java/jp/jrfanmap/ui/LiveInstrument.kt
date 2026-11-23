@@ -44,7 +44,10 @@ internal fun LiveIntervalCard(
 ) {
     val speed = fix?.speedMps?.takeIf { it.isFinite() && it >= 0f }?.times(3.6f)
     val interval = match?.interval
-    val upcoming = interval?.next ?: match?.next?.firstOrNull()
+    val upcomingStops = (listOfNotNull(interval?.next) + match?.next.orEmpty())
+        .asSequence().distinctBy { it.station.name }.take(3).toList()
+    val upcoming = upcomingStops.firstOrNull()
+    val following = upcomingStops.drop(1)
     val routeName = match?.line?.name
     Surface(modifier.testTag("live-interval-card"), color = Color.Transparent, shape = DisplayShape,
         border = androidx.compose.foundation.BorderStroke(1.dp, DisplayGrid), shadowElevation = 4.dp) {
@@ -95,7 +98,16 @@ internal fun LiveIntervalCard(
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 122.dp))
                 }
             }
-            if (upcoming != null || telemetry.recording) {
+            if (following.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(top = 5.dp).testTag("live-following-stops"),
+                horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("后续", color = DisplayMuted, fontSize = 10.sp, lineHeight = 14.sp)
+                following.forEachIndexed { index, stop ->
+                    if (index > 0) Text("→", color = DisplayCyan, fontSize = 10.sp, lineHeight = 14.sp)
+                    Text(stop.station.name, Modifier.weight(1f, fill = false).testTag("live-following-stop"), color = DisplayText,
+                        fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (telemetry.recording || (upcoming != null && following.isEmpty())) {
                 val note = if (telemetry.recording) "记录中 · ${(telemetry.distanceM / 1000).fmt(2)} km" else "沿轨推断"
                 Text(note, Modifier.padding(top = 5.dp), color = DisplayMuted, fontSize = 10.sp, lineHeight = 14.sp)
             } else if (!telemetry.active && fix == null) {

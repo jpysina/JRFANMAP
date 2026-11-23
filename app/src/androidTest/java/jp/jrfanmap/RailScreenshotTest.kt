@@ -42,6 +42,7 @@ class RailScreenshotTest {
             compose.onAllNodesWithText("定位已过期").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("live-segment-progress").assertDoesNotExist()
+        compose.onNodeWithTag("live-following-stops").assertDoesNotExist()
         compose.onNodeWithText("定位已过期").assertIsDisplayed()
     }
 
@@ -90,25 +91,28 @@ class RailScreenshotTest {
         compose.waitUntil(20_000) { model.catalog.value.info != null }
         compose.onNodeWithText("全屏").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("rail-map-ready").fetchSemanticsNodes().isNotEmpty() }
-        val network = store.catalog.sections(RailBounds(139.75, 35.64, 139.77, 35.68)).map { it.lineId }.distinct()
-            .firstNotNullOf { id -> store.catalog.network(id)?.takeIf { it.line.name == "東海道新幹線" } }
-        val position = GeoPoint(139.75805, 35.65750)
-        val along = TrackGraph(network).ahead(GeoPoint(139.75834, 35.65940), position)
+        val network = store.catalog.sections(RailBounds(139.69, 35.69, 139.71, 35.72)).map { it.lineId }.distinct()
+            .firstNotNullOf { id -> store.catalog.network(id)?.takeIf { it.line.name == "山手線" && it.line.operator == "東日本旅客鉄道" } }
+        val position = GeoPoint(139.700412, 35.702412)
+        val along = TrackGraph(network).ahead(GeoPoint(139.7003816, 35.7022201), position)
         val interval = checkNotNull(along.interval)
-        check(interval.previous.station.name == "東京" && interval.next.station.name == "品川")
+        check(interval.previous.station.name == "新大久保" && interval.next.station.name == "高田馬場")
         val simulate: (Long) -> Unit = { age ->
             compose.runOnIdle {
                 val observed = SystemClock.elapsedRealtimeNanos() - age * 1_000_000
-                val fix = Fix(position.lat, position.lon, 11.0, 25f, 0.5f, 180f, 5f, null,
+                val fix = Fix(position.lat, position.lon, 11.0, 20f, 0.5f, null, 5f, null,
                     "gps", System.currentTimeMillis() - age, observed)
                 store.update { it.copy(active = true, fix = fix, network = true) }
                 model.live.value = LiveMatch(network.line, along.reason, 2.0, along.stations, interval, observed)
             }
         }
         simulate(0)
-        compose.onNodeWithTag("live-speed").assertTextEquals("90")
+        compose.onNodeWithTag("live-speed").assertTextEquals("72")
         compose.onNodeWithTag("live-segment-progress").assertIsDisplayed()
         compose.onNodeWithText("下一经由站").assertIsDisplayed()
+        val following = compose.onAllNodesWithTag("live-following-stop").assertCountEquals(2)
+        following[0].assertTextEquals("目白").assertIsDisplayed()
+        following[1].assertTextEquals("池袋").assertIsDisplayed()
         compose.waitUntil(25_000) {
             simulate(0)
             mapIsPainted()
