@@ -110,7 +110,6 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
         } == true
     }
     val line = currentMatch?.line
-    val ahead = currentMatch?.next?.take(4).orEmpty()
     val status = when {
         fix?.mock == true -> "模拟定位"
         fix?.speedMps?.let { it.isFinite() && it >= 0 } == true && fix.provider == "gps" -> "GPS 实测"
@@ -133,6 +132,8 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     BoxWithConstraints(Modifier.fillMaxSize().testTag("live-page")) {
         val wide = maxWidth > maxHeight && maxWidth >= 490.dp
         val cardWidth = if (wide) (maxWidth * .42f).coerceAtMost(306.dp) else (maxWidth - 20.dp).coerceAtMost(326.dp)
+        val ahead = (listOfNotNull(currentMatch?.interval?.next) + currentMatch?.next.orEmpty())
+            .distinctBy { it.station.name }.take(if (cardWidth >= 300.dp) MAX_AHEAD_STOPS else 3)
         RailMap(fix, t.path, follow, handle, MapBase.NAVIGATION, t.network, offline.regions, catalog.info?.year ?: 0,
             model::visibleRail, onLines = { selection = RailSelectionState(lines = it) },
             onStation = { selection = RailSelectionState(station = it) },
@@ -170,7 +171,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
             }
         }
 
-        if (selection.isEmpty) LiveIntervalCard(t, fix, currentMatch, reason, onRecord, onPermission,
+        if (selection.isEmpty) LiveIntervalCard(t, fix, currentMatch, ahead, reason, onRecord, onPermission,
             onDetails = line?.let { { selection = RailSelectionState(lines = listOf(it.id), openDetails = true) } },
             modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 29.dp).width(cardWidth),
             glassTarget = handle.blurTarget)

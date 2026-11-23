@@ -9,6 +9,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Surface
@@ -25,12 +26,14 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -43,6 +46,9 @@ import eightbitlab.com.blurview.BlurView
 import jp.jrfanmap.R
 import jp.jrfanmap.data.Fix
 import jp.jrfanmap.data.Telemetry
+import jp.jrfanmap.map.LATER_STATION_COLOR
+import jp.jrfanmap.map.NEXT_STATION_COLOR
+import jp.jrfanmap.rail.AheadStation
 import jp.jrfanmap.rail.LiveMatch
 import jp.jrfanmap.rail.StationInterval
 import kotlin.math.ceil
@@ -52,7 +58,8 @@ internal val DisplayText = Color(0xFFF0F7F8)
 internal val DisplayMuted = Color(0xFF9DB6BC)
 internal val DisplayCyan = Color(0xFF61E4DC)
 internal val DisplayGrid = Color(0xFF304C57)
-private val DisplayAccent = Color(0xFFDEFBA5)
+private val DisplayAccent = Color(NEXT_STATION_COLOR)
+private val StationAccent = Color(LATER_STATION_COLOR)
 private val DisplayShape = RoundedCornerShape(20.dp)
 private val DisplayRim = Brush.linearGradient(listOf(Color(0xB574B4C4), Color(0x4158869A), Color(0x94597999)))
 private val DisplayControl = Color(0xFF64E2E1).copy(alpha = .12f)
@@ -60,16 +67,13 @@ private val DisplayDigits = FontFamily(Font(R.font.chakra_petch_semibold, FontWe
 
 @Composable
 internal fun LiveIntervalCard(
-    telemetry: Telemetry, fix: Fix?, match: LiveMatch?, reason: String,
+    telemetry: Telemetry, fix: Fix?, match: LiveMatch?, ahead: List<AheadStation>, reason: String,
     onRecord: () -> Unit, onPermission: () -> Unit, onDetails: (() -> Unit)?, modifier: Modifier = Modifier,
     glassTarget: BlurTarget? = null
 ) {
     val speed = fix?.speedMps?.takeIf { it.isFinite() && it >= 0f }?.times(3.6f)
     val interval = match?.interval
-    val upcomingStops = (listOfNotNull(interval?.next) + match?.next.orEmpty())
-        .asSequence().distinctBy { it.station.name }.take(3).toList()
-    val upcoming = upcomingStops.firstOrNull()
-    val following = upcomingStops.drop(1)
+    val upcoming = ahead.firstOrNull()
     val routeName = match?.line?.name
     Surface(modifier.testTag("live-interval-card"), color = Color.Transparent, shape = DisplayShape,
         border = BorderStroke(1.dp, DisplayRim), shadowElevation = 6.dp) {
@@ -116,26 +120,10 @@ internal fun LiveIntervalCard(
                             lineHeight = 15.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                if (interval != null) {
-                    IntervalTrack(interval, Modifier.padding(top = 7.dp))
-                    Row(Modifier.fillMaxWidth().padding(top = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(interval.previous.station.name, Modifier.weight(1f), color = DisplayMuted,
-                            fontSize = 11.sp, lineHeight = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(interval.next.station.name, color = DisplayCyan, fontSize = 11.sp, lineHeight = 15.sp,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 122.dp))
-                    }
+                if (ahead.isNotEmpty()) {
+                    StationStrip(ahead, interval, Modifier.padding(top = 9.dp))
                 }
-                if (following.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(top = 6.dp).testTag("live-following-stops"),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("后续", color = DisplayMuted, fontSize = 10.sp, lineHeight = 14.sp)
-                    following.forEach { stop ->
-                        Text("›", color = DisplayCyan, fontSize = 13.sp, lineHeight = 14.sp)
-                        Text(stop.station.name, Modifier.weight(1f, fill = false).testTag("live-following-stop")
-                            .background(DisplayControl, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp), color = DisplayText,
-                            fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                if (telemetry.recording || (upcoming != null && following.isEmpty())) {
+                if (telemetry.recording || ahead.size == 1) {
                     val note = if (telemetry.recording) "记录中 · ${(telemetry.distanceM / 1000).fmt(2)} km" else "沿轨推断"
                     Text(note, Modifier.padding(top = 5.dp), color = DisplayMuted, fontSize = 10.sp, lineHeight = 14.sp)
                 } else if (!telemetry.active && fix == null) {
@@ -202,30 +190,68 @@ private fun VelocityReadout(speed: Float?, highSpeed: Boolean) {
 }
 
 @Composable
-private fun IntervalTrack(interval: StationInterval, modifier: Modifier) {
-    val fraction = interval.progress.coerceIn(0f, 1f)
-    val animated by animateFloatAsState(fraction, tween(300), label = "rail progress")
-    Canvas(modifier.fillMaxWidth().height(17.dp).testTag("live-segment-progress").semantics {
+private fun StationStrip(ahead: List<AheadStation>, interval: StationInterval?, modifier: Modifier) {
+    val hasPrevious = interval != null
+    val stations = listOfNotNull(interval?.previous) + ahead
+    val fraction = interval?.progress?.coerceIn(0f, 1f) ?: 0f
+    val progress by animateFloatAsState(fraction, tween(300), label = "rail progress")
+    val trackSemantics = if (interval == null) Modifier else Modifier.testTag("live-segment-progress").semantics {
         contentDescription = "沿轨区间进度，${interval.previous.station.name}到${interval.next.station.name}"
         progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
-    }) {
-        val inset = 5.dp.toPx()
-        val end = size.width - inset
-        val center = center.y
-        val current = inset + (end - inset).coerceAtLeast(0f) * animated
-        drawLine(DisplayGrid, Offset(inset, center), Offset(end, center), 2.dp.toPx(), StrokeCap.Round)
-        for (tick in 1..19) {
-            val x = inset + (end - inset) * tick / 20f
-            val lineColor = if (x <= current) DisplayCyan.copy(alpha = .65f) else DisplayGrid
-            drawLine(lineColor, Offset(x, center - 3.dp.toPx()), Offset(x, center + 3.dp.toPx()), 1.dp.toPx())
+    }
+
+    Box(modifier.fillMaxWidth().testTag("live-station-strip")) {
+        Canvas(Modifier.fillMaxWidth().height(25.dp).then(trackSemantics)) {
+            val spacing = size.width / stations.size
+            val first = spacing / 2
+            val last = size.width - first
+            val railY = 15.dp.toPx()
+            drawLine(StationAccent.copy(alpha = .44f), Offset(first, railY), Offset(last, railY), 1.6.dp.toPx(), StrokeCap.Round)
+            if (hasPrevious) {
+                val current = first + spacing * progress
+                drawCircle(DisplayMuted, 3.dp.toPx(), Offset(first, railY))
+                drawLine(DisplayCyan, Offset(first, railY), Offset(current, railY), 2.dp.toPx(), StrokeCap.Round)
+                val arrow = Path().apply {
+                    moveTo(current - 4.dp.toPx(), 2.dp.toPx())
+                    lineTo(current + 4.dp.toPx(), 5.5.dp.toPx())
+                    lineTo(current - 4.dp.toPx(), 9.dp.toPx())
+                    close()
+                }
+                drawPath(arrow, DisplayAccent)
+            }
         }
-        drawLine(Brush.horizontalGradient(listOf(Color(0xFF21A9C5), DisplayCyan), startX = inset, endX = end),
-            Offset(inset, center), Offset(current, center), 3.dp.toPx(), StrokeCap.Round)
-        drawCircle(DisplayCyan, 3.dp.toPx(), Offset(inset, center))
-        drawCircle(DisplayMuted, 3.dp.toPx(), Offset(end, center))
-        drawCircle(Brush.radialGradient(listOf(DisplayCyan.copy(alpha = .6f), Color.Transparent),
-            center = Offset(current, center), radius = 8.dp.toPx()), 8.dp.toPx(), Offset(current, center))
-        drawCircle(DisplayAccent, 3.5.dp.toPx(), Offset(current, center))
+        Row(Modifier.fillMaxWidth()) {
+            stations.forEachIndexed { index, stop ->
+                val order = index + if (hasPrevious) 0 else 1
+                val tint = when (order) {
+                    0 -> DisplayMuted
+                    1 -> DisplayAccent
+                    else -> StationAccent
+                }
+                Column(Modifier.weight(1f).padding(horizontal = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    // The unnumbered node is the previous station. Its dot is part of the progress track.
+                    Box(Modifier.padding(top = 7.dp).size(16.dp), contentAlignment = Alignment.Center) {
+                        if (order > 0) Surface(shape = CircleShape,
+                            color = if (order == 1) tint else DisplayPanel, border = BorderStroke(1.dp, tint)) {
+                            Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                                Text(order.toString(), color = if (order == 1) DisplayPanel else tint,
+                                    fontFamily = DisplayDigits, fontWeight = FontWeight.SemiBold,
+                                    fontSize = 10.sp, lineHeight = 12.sp)
+                            }
+                        }
+                    }
+                    val nameModifier = if (order > 1) Modifier.testTag("live-following-stop") else Modifier
+                    Text(stop.station.name, nameModifier.padding(top = 3.dp).semantics {
+                        stateDescription = when (order) {
+                            0 -> "上一经由站"
+                            1 -> "下一经由站"
+                            else -> "前方第 ${order} 站"
+                        }
+                    }, color = if (order <= 1) tint else DisplayText,
+                        fontSize = 11.sp, lineHeight = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
     }
 }
 

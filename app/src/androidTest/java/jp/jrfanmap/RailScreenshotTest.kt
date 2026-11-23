@@ -37,12 +37,16 @@ class RailScreenshotTest {
         compose.waitUntil(12_000) { compose.onAllNodesWithTag("rail-station-row").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("站点名录").assertIsDisplayed()
         compose.onNodeWithTag("rail-info-close").performClick()
-        simulate(20_000)
+        compose.waitUntil(15_000) {
+            simulate(0, false)
+            mapIsPainted(checkRoads = false)
+        }
+        simulate(20_000, false)
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("定位已过期").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("live-segment-progress").assertDoesNotExist()
-        compose.onNodeWithTag("live-following-stops").assertDoesNotExist()
+        compose.onNodeWithTag("live-station-strip").assertDoesNotExist()
         compose.onNodeWithText("定位已过期").assertIsDisplayed()
     }
 
@@ -78,7 +82,7 @@ class RailScreenshotTest {
     }
 
     /** The screenshots use an actual catalog segment and a controlled GPS observation. */
-    private fun prepareInterval(): (Long) -> Unit {
+    private fun prepareInterval(): (Long, Boolean) -> Unit {
         val activity = compose.activity
         val app = activity.application as RailApplication
         val store = app.store
@@ -97,41 +101,47 @@ class RailScreenshotTest {
         val along = TrackGraph(network).ahead(GeoPoint(139.7003816, 35.7022201), position)
         val interval = checkNotNull(along.interval)
         check(interval.previous.station.name == "新大久保" && interval.next.station.name == "高田馬場")
-        val simulate: (Long) -> Unit = { age ->
+        val simulate: (Long, Boolean) -> Unit = { age, online ->
             compose.runOnIdle {
                 val observed = SystemClock.elapsedRealtimeNanos() - age * 1_000_000
                 val fix = Fix(position.lat, position.lon, 11.0, 20f, 0.5f, null, 5f, null,
                     "gps", System.currentTimeMillis() - age, observed)
-                store.update { it.copy(active = true, fix = fix, network = true) }
+                store.update { it.copy(active = true, fix = fix, network = online) }
                 model.live.value = LiveMatch(network.line, along.reason, 2.0, along.stations, interval, observed)
             }
         }
-        simulate(0)
+        simulate(0, true)
         compose.onNodeWithTag("live-speed").assertTextEquals("72")
         compose.onNodeWithTag("live-segment-progress").assertIsDisplayed()
         compose.onNodeWithText("下一经由站").assertIsDisplayed()
-        val following = compose.onAllNodesWithTag("live-following-stop").assertCountEquals(2)
-        following[0].assertTextEquals("目白").assertIsDisplayed()
-        following[1].assertTextEquals("池袋").assertIsDisplayed()
+        val expectedFollowing = along.stations.filter { it.station.name != interval.next.station.name }.take(3)
+        check(expectedFollowing.take(2).map { it.station.name } == listOf("目白", "池袋"))
+        val following = compose.onAllNodesWithTag("live-following-stop").assertCountEquals(expectedFollowing.size)
+        expectedFollowing.forEachIndexed { index, stop ->
+            following[index].assertTextEquals(stop.station.name).assertIsDisplayed()
+            if (index > 0) assertTrue(following[index - 1].fetchSemanticsNode().boundsInRoot.center.x <
+                following[index].fetchSemanticsNode().boundsInRoot.center.x)
+        }
         compose.waitUntil(25_000) {
-            simulate(0)
+            simulate(0, true)
             mapIsPainted()
         }
         SystemClock.sleep(1_200)
-        simulate(0)
+        simulate(0, true)
         val card = compose.onNodeWithTag("live-interval-card").fetchSemanticsNode().boundsInRoot
         val canvas = compose.onNodeWithTag("rail-map-ready").fetchSemanticsNode().boundsInRoot
         assertTrue("The floating card keeps most of the map visible", card.width * card.height < canvas.width * canvas.height * .25f)
         return simulate
     }
 
-    private fun mapIsPainted(): Boolean {
+    private fun mapIsPainted(checkRoads: Boolean = true): Boolean {
         val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
         val image = ui.takeScreenshot() ?: return false
         try {
             var roads = 0
             var route = 0
-            for (y in image.height / 5 until image.height * 3 / 5 step 4) {
+            var nextStation = 0
+            for (y in image.height / 12 until image.height * 3 / 5 step 4) {
                 for (x in image.width / 5 until image.width * 4 / 5 step 4) {
                     val pixel = image.getPixel(x, y)
                     val r = Color.red(pixel)
@@ -140,9 +150,10 @@ class RailScreenshotTest {
                     // The navigation tiles draw major roads above the dark offline land color.
                     if (r in 56..88 && g in 75..106 && b in 82..114 && b >= g && g - r in 17..28) roads++
                     if (r > 229 && g in 135..185 && b < 65) route++
+                    if (x > image.width * 2 / 5 && r in 210..229 && g >= 243 && b in 145..180) nextStation++
                 }
             }
-            return roads > 24 && route > 12
+            return (roads > 24) == checkRoads && route > 12 && nextStation > 8
         } finally { image.recycle() }
     }
 

@@ -1,5 +1,9 @@
 package jp.jrfanmap.map
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.PointF
 import android.os.Build
@@ -36,6 +40,7 @@ import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
 import org.maplibre.android.style.sources.VectorSource
 import org.maplibre.geojson.*
+import kotlin.math.roundToInt
 
 class MapHandle {
     internal var map: MapLibreMap? = null
@@ -60,6 +65,10 @@ private const val HIGHLIGHT_CASING = "selected-line-casing"
 private const val TRACK_CASING = "rail-casing"
 private const val SELECTED_STOPS = "selected-stations"
 private const val SELECTED_LABELS = "selected-station-labels"
+private const val AHEAD_SOURCE = "ahead-local"
+internal const val MAX_AHEAD_STOPS = 4
+internal const val NEXT_STATION_COLOR = 0xFFDEFBA5
+internal const val LATER_STATION_COLOR = 0xFF77D8D5
 private const val HIGHLIGHT_COLOR = "#F5A623"
 private const val HIGHLIGHT_GLOW = "selected-rail-glow"
 private const val GSI_PALE = "https://cyberjapandata.gsi.go.jp/xyz/pale/"
@@ -235,8 +244,8 @@ fun RailMap(
                 .withProperties(lineColor(HIGHLIGHT_COLOR),
                     lineWidth(interpolate(linear(), zoom(), stop(5, 2.0), stop(12, 4.4), stop(17, 7.5))),
                     lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
-            style.addSource(GeoJsonSource("ahead-local", empty))
-            style.addLayer(CircleLayer("ahead-dots", "ahead-local").withProperties(circleColor("#F4B039"),
+            style.addSource(GeoJsonSource(AHEAD_SOURCE, empty))
+            if (!navigation) style.addLayer(CircleLayer("ahead-dots", AHEAD_SOURCE).withProperties(circleColor("#F4B039"),
                 circleRadius(5f), circleStrokeColor("#15252A"), circleStrokeWidth(2f)))
             style.addSource(GeoJsonSource("stations-local", empty))
             style.addLayer(CircleLayer(STATIONS, "stations-local").withProperties(circleColor(if (navigation) "#A0B5BE" else "#F7FAF8"),
@@ -248,7 +257,9 @@ fun RailMap(
                 textField(get("station")), textFont(arrayOf("NotoSansCJKjp-Regular")), textSize(11f),
                 textColor(if (navigation) "#FFF1D1" else "#253D45"),
                 textHaloColor(if (navigation) "#16222C" else "#FFFBEE"), textHaloWidth(1.3f),
-                textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, .7f))).apply { minZoom = 12.5f })
+                textAnchor(Property.TEXT_ANCHOR_TOP),
+                textOffset(arrayOf(0f, if (navigation) 1f else .7f))).apply { minZoom = 12.5f })
+            if (navigation) addAheadStationMarkers(style, context)
             style.addSource(GeoJsonSource("trip", empty))
             style.addLayer(LineLayer("trip-line", "trip").withProperties(lineColor("#EF8C78"), lineWidth(4f)))
             style.addSource(GeoJsonSource("device", empty))
@@ -311,8 +322,10 @@ fun RailMap(
         style.getLayerAs<LineLayer>(TRACKS)?.setProperties(lineOpacity(opacity))
         style.getLayerAs<CircleLayer>(SELECTED_STOPS)?.setFilter(filter)
         style.getLayerAs<SymbolLayer>(SELECTED_LABELS)?.setFilter(if (online) filter else eq(get("railId"), ""))
-        style.getSourceAs<GeoJsonSource>("ahead-local")?.setGeoJson(FeatureCollection.fromFeatures(ahead.map {
-            Feature.fromGeometry(Point.fromLngLat(it.station.point.lon, it.station.point.lat))
+        style.getSourceAs<GeoJsonSource>(AHEAD_SOURCE)?.setGeoJson(FeatureCollection.fromFeatures(ahead.mapIndexed { index, stop ->
+            Feature.fromGeometry(Point.fromLngLat(stop.station.point.lon, stop.station.point.lat)).apply {
+                addStringProperty("marker", aheadMarkerId(index + 1))
+            }
         }))
     }
 
@@ -392,6 +405,41 @@ fun RailMap(
             }
         } else view
     }, modifier = modifier.testTag(if (loadedStyle != null) "rail-map-ready" else "rail-map-loading"))
+}
+
+private fun aheadMarkerId(order: Int) = "ahead-station-$order"
+
+private fun addAheadStationMarkers(style: Style, context: Context) {
+    val metrics = context.resources.displayMetrics
+    val size = (22 * metrics.density).roundToInt()
+    val center = size / 2f
+    val font = context.resources.getFont(jp.jrfanmap.R.font.chakra_petch_semibold)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = font
+        textAlign = Paint.Align.CENTER
+        textSize = 12 * metrics.density
+    }
+    val background = 0xFF0C1923.toInt()
+    for (order in 1..MAX_AHEAD_STOPS) {
+        val image = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply { density = metrics.densityDpi }
+        val canvas = Canvas(image)
+        val tint = (if (order == 1) NEXT_STATION_COLOR else LATER_STATION_COLOR).toInt()
+        paint.color = background
+        canvas.drawCircle(center, center, 10.5f * metrics.density, paint)
+        paint.color = tint
+        canvas.drawCircle(center, center, 8.8f * metrics.density, paint)
+        if (order > 1) {
+            paint.color = background
+            canvas.drawCircle(center, center, 7.4f * metrics.density, paint)
+        }
+        paint.color = if (order == 1) background else tint
+        canvas.drawText(order.toString(), center, center - (paint.ascent() + paint.descent()) / 2, paint)
+        style.addImage(aheadMarkerId(order), image)
+    }
+    style.addLayer(SymbolLayer("ahead-markers", AHEAD_SOURCE).withProperties(
+        iconImage(get("marker")), iconAllowOverlap(true), iconIgnorePlacement(true),
+        iconSize(interpolate(linear(), zoom(), stop(11.5, .75), stop(13, 1.0)))
+    ).apply { minZoom = 11.5f })
 }
 
 private fun MapLibreMap.viewport(): Viewport {
