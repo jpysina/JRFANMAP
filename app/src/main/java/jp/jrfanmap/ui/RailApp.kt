@@ -133,13 +133,13 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     BoxWithConstraints(Modifier.fillMaxSize().testTag("live-page")) {
         val wide = maxWidth > maxHeight && maxWidth >= 490.dp
         val cardWidth = if (wide) (maxWidth * .42f).coerceAtMost(306.dp) else (maxWidth - 20.dp).coerceAtMost(326.dp)
-        RailMap(fix, t.path, follow, handle, MapBase.PALE, t.network, offline.regions, catalog.info?.year ?: 0,
+        RailMap(fix, t.path, follow, handle, MapBase.NAVIGATION, t.network, offline.regions, catalog.info?.year ?: 0,
             model::visibleRail, onLines = { selection = RailSelectionState(lines = it) },
             onStation = { selection = RailSelectionState(station = it) },
             onShinjukuPreview = { preview = it }, onEmptyTap = { selection = RailSelectionState() },
             modifier = Modifier.fillMaxSize(), highlightedLine = selection.lineId ?: line?.id,
             ahead = ahead.takeIf { selection.lineId == null || selection.lineId == line?.id }.orEmpty(),
-            onGesture = { follow = false }, onError = { model.message.value = it })
+            onGesture = { follow = false }, frostedHud = true, onError = { model.message.value = it })
 
         Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(10.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Top) {
@@ -172,7 +172,8 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
 
         if (selection.isEmpty) LiveIntervalCard(t, fix, currentMatch, reason, onRecord, onPermission,
             onDetails = line?.let { { selection = RailSelectionState(lines = listOf(it.id), openDetails = true) } },
-            modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 29.dp).width(cardWidth))
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 29.dp).width(cardWidth),
+            glassTarget = handle.blurTarget)
         Surface(Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp), color = Ink.copy(alpha = .86f), shape = Cut) {
             Text("国土交通省・国土地理院", Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                 color = Color.White, fontSize = 9.sp, lineHeight = 12.sp)
@@ -334,7 +335,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
                 })
                 HorizontalDivider()
                 listOf(MapBase.PALE to "地理院淡色地图", MapBase.RAIL to "铁路概略图", MapBase.STANDARD to "地理院标准地图",
-                    MapBase.VECTOR to "地理院实验矢量图").forEach { (mode, title) ->
+                    MapBase.VECTOR to "地理院实验矢量图", MapBase.NAVIGATION to "地理院导航矢量图").forEach { (mode, title) ->
                     DropdownMenuItem(text = { Text(if (mode == base) "$title ✓" else title) }, onClick = {
                         base = mode
                         prefs.edit().putString("map_base", mode.name).apply()

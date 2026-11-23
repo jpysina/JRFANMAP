@@ -2,8 +2,10 @@ package jp.jrfanmap.map
 
 import android.graphics.RectF
 import android.graphics.PointF
+import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.widget.FrameLayout
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -12,6 +14,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import eightbitlab.com.blurview.BlurTarget
 import jp.jrfanmap.RailApplication
 import jp.jrfanmap.data.Fix
 import jp.jrfanmap.rail.*
@@ -36,6 +39,7 @@ import org.maplibre.geojson.*
 
 class MapHandle {
     internal var map: MapLibreMap? = null
+    internal var blurTarget by mutableStateOf<BlurTarget?>(null)
     fun area(): DownloadArea? = map?.let {
         val b = it.projection.visibleRegion.latLngBounds
         val min = (it.cameraPosition.zoom.toInt() - 1).coerceIn(4, 14)
@@ -44,16 +48,20 @@ class MapHandle {
     }
 }
 
-enum class MapBase { RAIL, PALE, STANDARD, VECTOR }
+enum class MapBase { RAIL, PALE, STANDARD, VECTOR, NAVIGATION }
 
 private const val SCHEMATIC_STYLE = "asset://rail-schematic.json"
 private const val VECTOR_STYLE = "asset://gsi-style.json"
+private const val NAVIGATION_STYLE = "asset://gsi-navigation.json"
+private const val NAVIGATION_OFFLINE_STYLE = "asset://rail-navigation-offline.json"
+private const val NAVIGATION_VECTOR_SOURCE = "gsi"
 private const val HIGHLIGHT = "selected-line"
 private const val HIGHLIGHT_CASING = "selected-line-casing"
 private const val TRACK_CASING = "rail-casing"
 private const val SELECTED_STOPS = "selected-stations"
 private const val SELECTED_LABELS = "selected-station-labels"
 private const val HIGHLIGHT_COLOR = "#F5A623"
+private const val HIGHLIGHT_GLOW = "selected-rail-glow"
 private const val GSI_PALE = "https://cyberjapandata.gsi.go.jp/xyz/pale/"
 private const val GSI_RAIL_DETAIL = "gsi-rail-details"
 private const val GSI_RAIL_TILE = "https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/{z}/{x}/{y}.pbf"
@@ -70,7 +78,7 @@ fun RailMap(
     loadRail: suspend (RailBounds, Boolean) -> Pair<List<RailSection>, List<RailStation>>,
     onLines: (List<Long>) -> Unit, onStation: (String) -> Unit,
     modifier: Modifier = Modifier, highlightedLine: Long? = null, ahead: List<AheadStation> = emptyList(),
-    onGesture: () -> Unit = {}, onEmptyTap: () -> Unit = {},
+    onGesture: () -> Unit = {}, onEmptyTap: () -> Unit = {}, frostedHud: Boolean = false,
     onShinjukuPreview: (Boolean) -> Unit = {}, onError: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -94,7 +102,13 @@ fun RailMap(
     val lineCallback by rememberUpdatedState(onLines)
     val stationCallback by rememberUpdatedState(onStation)
     val loadCallback by rememberUpdatedState(loadRail)
-    val detailStyle = base == MapBase.VECTOR && online
+    val navigation = base == MapBase.NAVIGATION
+    val styleUri = when {
+        navigation && online -> NAVIGATION_STYLE
+        navigation -> NAVIGATION_OFFLINE_STYLE
+        base == MapBase.VECTOR && online -> VECTOR_STYLE
+        else -> SCHEMATIC_STYLE
+    }
     LaunchedEffect(showingShinjuku) { previewCallback(showingShinjuku) }
     DisposableEffect(view, owner) {
         var disposed = false
@@ -181,6 +195,7 @@ fun RailMap(
             disposed = true
             owner.lifecycle.removeObserver(observer)
             handle.map = null
+            handle.blurTarget = null
             tapJob?.cancel()
             view.removeOnDidFailLoadingMapListener(listener)
             view.removeOnLayoutChangeListener(layout)
@@ -190,24 +205,30 @@ fun RailMap(
         }
     }
 
-    LaunchedEffect(map, detailStyle) {
+    LaunchedEffect(map, styleUri) {
         val instance = map ?: return@LaunchedEffect
         loadedStyle = null
-        instance.setStyle(Style.Builder().fromUri(if (detailStyle) VECTOR_STYLE else SCHEMATIC_STYLE)) { style ->
+        instance.setStyle(Style.Builder().fromUri(styleUri)) { style ->
             val empty = FeatureCollection.fromFeatures(emptyList<Feature>())
             style.addSource(GeoJsonSource("rail-local", empty))
             val selectedFilter = eq(get("railId"), "")
-            val trackColor = match(get("category"), literal("#4F6572"),
-                stop("1", "#9B4960"), stop("2", "#25677A"), stop("3", "#4E679A"),
-                stop("4", "#79668B"), stop("5", "#895B45"))
-            style.addLayer(LineLayer(TRACK_CASING, "rail-local").withProperties(lineColor("#F7FAF8"),
+            val trackColor = if (navigation) match(get("category"), literal("#75929C"),
+                stop("1", "#D298AA"), stop("2", "#74AFBD"), stop("3", "#8B9DC5"),
+                stop("4", "#9D91BC"), stop("5", "#C89F8E"))
+            else match(get("category"), literal("#4F6572"), stop("1", "#9B4960"),
+                stop("2", "#25677A"), stop("3", "#4E679A"), stop("4", "#79668B"), stop("5", "#895B45"))
+            style.addLayer(LineLayer(TRACK_CASING, "rail-local").withProperties(lineColor(if (navigation) "#111D28" else "#F7FAF8"),
                 lineWidth(interpolate(linear(), zoom(), stop(5, 1.4), stop(12, 3.4), stop(17, 6.0))),
                 lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND), lineOpacity(.92f)))
             style.addLayer(LineLayer(TRACKS, "rail-local").withProperties(lineColor(trackColor),
                 lineWidth(interpolate(linear(), zoom(), stop(5, .65), stop(12, 2.0), stop(17, 4.0))),
                 lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
+            if (navigation) style.addLayer(LineLayer(HIGHLIGHT_GLOW, "rail-local").withFilter(selectedFilter)
+                .withProperties(lineColor(HIGHLIGHT_COLOR), lineOpacity(.38f), lineBlur(4f),
+                    lineWidth(interpolate(linear(), zoom(), stop(5, 5), stop(12, 10), stop(17, 16))),
+                    lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
             style.addLayer(LineLayer(HIGHLIGHT_CASING, "rail-local").withFilter(selectedFilter)
-                .withProperties(lineColor("#254049"),
+                .withProperties(lineColor(if (navigation) "#34251F" else "#254049"),
                     lineWidth(interpolate(linear(), zoom(), stop(5, 3.8), stop(12, 7.0), stop(17, 11.0))),
                     lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
             style.addLayer(LineLayer(HIGHLIGHT, "rail-local").withFilter(selectedFilter)
@@ -218,26 +239,27 @@ fun RailMap(
             style.addLayer(CircleLayer("ahead-dots", "ahead-local").withProperties(circleColor("#F4B039"),
                 circleRadius(5f), circleStrokeColor("#15252A"), circleStrokeWidth(2f)))
             style.addSource(GeoJsonSource("stations-local", empty))
-            style.addLayer(CircleLayer(STATIONS, "stations-local").withProperties(circleColor("#F7FAF8"),
+            style.addLayer(CircleLayer(STATIONS, "stations-local").withProperties(circleColor(if (navigation) "#A0B5BE" else "#F7FAF8"),
                 circleRadius(interpolate(linear(), zoom(), stop(10, 1.0), stop(14, 2.5), stop(17, 4.0))),
-                circleStrokeColor("#587580"), circleStrokeWidth(1f)))
+                circleStrokeColor(if (navigation) "#1A303E" else "#587580"), circleStrokeWidth(1f)))
             style.addLayer(CircleLayer(SELECTED_STOPS, "stations-local").withFilter(selectedFilter)
                 .withProperties(circleColor("#FFFBEE"), circleRadius(4f), circleStrokeColor("#81510A"), circleStrokeWidth(2f)))
             style.addLayer(SymbolLayer(SELECTED_LABELS, "stations-local").withFilter(selectedFilter).withProperties(
                 textField(get("station")), textFont(arrayOf("NotoSansCJKjp-Regular")), textSize(11f),
-                textColor("#253D45"), textHaloColor("#FFFBEE"), textHaloWidth(1.3f),
+                textColor(if (navigation) "#FFF1D1" else "#253D45"),
+                textHaloColor(if (navigation) "#16222C" else "#FFFBEE"), textHaloWidth(1.3f),
                 textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, .7f))).apply { minZoom = 12.5f })
             style.addSource(GeoJsonSource("trip", empty))
             style.addLayer(LineLayer("trip-line", "trip").withProperties(lineColor("#EF8C78"), lineWidth(4f)))
             style.addSource(GeoJsonSource("device", empty))
-            style.addLayer(CircleLayer("device-dot", "device").withProperties(circleColor("#017D72"), circleRadius(7f),
+            style.addLayer(CircleLayer("device-dot", "device").withProperties(circleColor(if (navigation) "#16B8AA" else "#017D72"), circleRadius(7f),
                 circleStrokeColor("#FFFFFF"), circleStrokeWidth(3f)))
             loadedStyle = style
             viewport = instance.viewport()
         }
     }
 
-    LaunchedEffect(loadedStyle, base, online, regions) {
+    LaunchedEffect(loadedStyle, base, styleUri, regions) {
         val style = loadedStyle ?: return@LaunchedEffect
         style.layers.filter { it.id.startsWith(GSI_LAYER_PREFIX) }.forEach {
             style.removeLayer(it.id)
@@ -245,7 +267,11 @@ fun RailMap(
         }
         style.layers.filter { it.id.startsWith("$GSI_RAIL_DETAIL-") }.forEach { style.removeLayer(it.id) }
         if (style.getSource(GSI_RAIL_DETAIL) != null) style.removeSource(GSI_RAIL_DETAIL)
-        if (base == MapBase.RAIL || detailStyle) return@LaunchedEffect
+        if (base == MapBase.RAIL || styleUri == VECTOR_STYLE) return@LaunchedEffect
+        if (styleUri == NAVIGATION_STYLE) {
+            addGsiRailDetails(style, NAVIGATION_VECTOR_SOURCE)
+            return@LaunchedEffect
+        }
         fun add(id: String, url: String, region: GsiRegion? = null, pale: Boolean = false) {
             val tiles = TileSet("2.2.0", url).apply {
                 attribution = GSI_ATTRIBUTION
@@ -256,6 +282,7 @@ fun RailMap(
             style.addSource(RasterSource(id, tiles, 256))
             val layer = RasterLayer(id, id).withProperties(rasterFadeDuration(0f))
             if (pale) layer.setProperties(rasterBrightnessMin(.28f), rasterSaturation(-.45f))
+            if (navigation) layer.setProperties(rasterBrightnessMax(.55f), rasterSaturation(-.76f), rasterOpacity(.75f))
             style.addLayerBelow(layer, TRACK_CASING)
         }
         fun addOnline() {
@@ -270,12 +297,18 @@ fun RailMap(
         }
     }
 
-    LaunchedEffect(loadedStyle, highlightedLine, ahead, online) {
+    LaunchedEffect(loadedStyle, highlightedLine, ahead, online, navigation) {
         val style = loadedStyle ?: return@LaunchedEffect
         val filter = eq(get("railId"), highlightedLine?.toString().orEmpty())
         style.getLayerAs<LineLayer>(HIGHLIGHT_CASING)?.setFilter(filter)
         style.getLayerAs<LineLayer>(HIGHLIGHT)?.setFilter(filter)
-        style.getLayerAs<LineLayer>(TRACKS)?.setProperties(lineOpacity(if (highlightedLine == null) .93f else .60f))
+        style.getLayerAs<LineLayer>(HIGHLIGHT_GLOW)?.setFilter(filter)
+        val opacity = when {
+            highlightedLine == null -> .93f
+            navigation -> .53f
+            else -> .60f
+        }
+        style.getLayerAs<LineLayer>(TRACKS)?.setProperties(lineOpacity(opacity))
         style.getLayerAs<CircleLayer>(SELECTED_STOPS)?.setFilter(filter)
         style.getLayerAs<SymbolLayer>(SELECTED_LABELS)?.setFilter(if (online) filter else eq(get("railId"), ""))
         style.getSourceAs<GeoJsonSource>("ahead-local")?.setGeoJson(FeatureCollection.fromFeatures(ahead.map {
@@ -351,7 +384,14 @@ fun RailMap(
         style.getSourceAs<GeoJsonSource>("trip")?.setGeoJson(FeatureCollection.fromFeatures(
             segments.filter { it.size >= 2 }.map { Feature.fromGeometry(LineString.fromLngLats(it)) }))
     }
-    AndroidView(factory = { view }, modifier = modifier.testTag(if (loadedStyle != null) "rail-map-ready" else "rail-map-loading"))
+    AndroidView(factory = {
+        if (frostedHud && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            BlurTarget(it).apply {
+                addView(view, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                handle.blurTarget = this
+            }
+        } else view
+    }, modifier = modifier.testTag(if (loadedStyle != null) "rail-map-ready" else "rail-map-loading"))
 }
 
 private fun MapLibreMap.viewport(): Viewport {
@@ -375,23 +415,26 @@ private fun stationMarkers(stations: List<RailStation>): List<RailStation> =
         }
     }
 
-private fun addGsiRailDetails(style: Style) {
-    val tiles = TileSet("2.2.0", GSI_RAIL_TILE).apply {
-        setMinZoom(4f)
-        setMaxZoom(16f)
-        attribution = "<a href=\"https://maps.gsi.go.jp/vector/\">地理院地図Vector</a>"
+private fun addGsiRailDetails(style: Style, source: String = GSI_RAIL_DETAIL) {
+    val navigation = source == NAVIGATION_VECTOR_SOURCE
+    if (!navigation) {
+        val tiles = TileSet("2.2.0", GSI_RAIL_TILE).apply {
+            setMinZoom(4f)
+            setMaxZoom(16f)
+            attribution = "<a href=\"https://maps.gsi.go.jp/vector/\">地理院地図Vector</a>"
+        }
+        style.addSource(VectorSource(source, tiles))
     }
-    style.addSource(VectorSource(GSI_RAIL_DETAIL, tiles))
     val railway = eq(get("ftCode"), 8201)
     val underground = any(*listOf(2, 3, 100, 300, 500).map { eq(get("railState"), it) }.toTypedArray())
     val siding = eq(get("snglDbl"), 3)
     fun layer(name: String, filter: Expression, min: Float, vararg properties: org.maplibre.android.style.layers.PropertyValue<*>) {
-        val layer = LineLayer("$GSI_RAIL_DETAIL-$name", GSI_RAIL_DETAIL).withSourceLayer("railway")
+        val layer = LineLayer("$GSI_RAIL_DETAIL-$name", source).withSourceLayer("railway")
             .withFilter(all(railway, filter)).withProperties(*properties).apply { minZoom = min }
-        style.addLayerBelow(layer, HIGHLIGHT_CASING)
+        style.addLayerBelow(layer, if (navigation) HIGHLIGHT_GLOW else HIGHLIGHT_CASING)
     }
     layer("surface", all(not(underground), not(siding)), 13f, lineColor("#71858B"),
-        lineWidth(interpolate(linear(), zoom(), stop(13, .65), stop(16, 1.5))), lineOpacity(.82f))
+        lineWidth(interpolate(linear(), zoom(), stop(13, .65), stop(16, 1.5))), lineOpacity(if (navigation) .56f else .82f))
     layer("tunnel", underground, 13f, lineColor("#52677C"), lineWidth(1.25f),
         lineDasharray(arrayOf(2.5f, 1.8f)), lineOpacity(.86f))
     layer("siding", siding, 15f, lineColor("#77888C"), lineWidth(.85f), lineOpacity(.70f))

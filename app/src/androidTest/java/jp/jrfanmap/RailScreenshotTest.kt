@@ -117,8 +117,7 @@ class RailScreenshotTest {
             simulate(0)
             mapIsPainted()
         }
-        // Give neighboring raster tiles time to replace the lower-resolution placeholders.
-        SystemClock.sleep(2_500)
+        SystemClock.sleep(1_200)
         simulate(0)
         val card = compose.onNodeWithTag("live-interval-card").fetchSemanticsNode().boundsInRoot
         val canvas = compose.onNodeWithTag("rail-map-ready").fetchSemanticsNode().boundsInRoot
@@ -130,7 +129,7 @@ class RailScreenshotTest {
         val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
         val image = ui.takeScreenshot() ?: return false
         try {
-            var light = 0
+            var roads = 0
             var route = 0
             for (y in image.height / 5 until image.height * 3 / 5 step 4) {
                 for (x in image.width / 5 until image.width * 4 / 5 step 4) {
@@ -138,11 +137,12 @@ class RailScreenshotTest {
                     val r = Color.red(pixel)
                     val g = Color.green(pixel)
                     val b = Color.blue(pixel)
-                    if (r > 233 && r == g && g == b) light++
+                    // The navigation tiles draw major roads above the dark offline land color.
+                    if (r in 56..88 && g in 75..106 && b in 82..114 && b >= g && g - r in 17..28) roads++
                     if (r > 229 && g in 135..185 && b < 65) route++
                 }
             }
-            return light > 500 && route > 12
+            return roads > 24 && route > 12
         } finally { image.recycle() }
     }
 
