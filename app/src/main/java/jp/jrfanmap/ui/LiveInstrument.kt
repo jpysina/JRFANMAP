@@ -56,6 +56,9 @@ internal fun LiveIntervalCard(
                 Text(routeName ?: "线路待确认", Modifier.weight(1f).padding(start = 7.dp),
                     color = DisplayText, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 18.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (onDetails != null) TextButton(onClick = onDetails, modifier = Modifier.testTag("live-station-details"),
+                    colors = ButtonDefaults.textButtonColors(contentColor = DisplayCyan),
+                    contentPadding = PaddingValues(horizontal = 6.dp)) { Text("站序 ›", fontSize = 12.sp) }
                 TextButton(onClick = onRecord, modifier = Modifier.testTag("record-button"),
                     colors = ButtonDefaults.textButtonColors(contentColor = if (telemetry.recording) Color(0xFFFFB2A0) else DisplayCyan),
                     contentPadding = PaddingValues(horizontal = 7.dp)) {
@@ -92,20 +95,13 @@ internal fun LiveIntervalCard(
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 122.dp))
                 }
             }
-            if (interval != null || onDetails != null || (!telemetry.active && fix == null) || telemetry.recording) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(when {
-                        telemetry.recording -> "记录中 · ${(telemetry.distanceM / 1000).fmt(2)} km"
-                        interval != null -> "沿轨推断"
-                        else -> ""
-                    }, Modifier.weight(1f), color = DisplayMuted, fontSize = 10.sp, lineHeight = 14.sp)
-                    if (onDetails != null) TextButton(onClick = onDetails, modifier = Modifier.testTag("live-station-details"),
-                        colors = ButtonDefaults.textButtonColors(contentColor = DisplayCyan),
-                        contentPadding = PaddingValues(horizontal = 4.dp)) { Text("站序 ›", fontSize = 12.sp) }
-                    else if (!telemetry.active && fix == null) TextButton(onClick = onPermission,
-                        colors = ButtonDefaults.textButtonColors(contentColor = DisplayCyan),
-                        contentPadding = PaddingValues(horizontal = 4.dp)) { Text("定位设置", fontSize = 12.sp) }
-                }
+            if (upcoming != null || telemetry.recording) {
+                val note = if (telemetry.recording) "记录中 · ${(telemetry.distanceM / 1000).fmt(2)} km" else "沿轨推断"
+                Text(note, Modifier.padding(top = 5.dp), color = DisplayMuted, fontSize = 10.sp, lineHeight = 14.sp)
+            } else if (!telemetry.active && fix == null) {
+                TextButton(onClick = onPermission, modifier = Modifier.align(Alignment.End),
+                    colors = ButtonDefaults.textButtonColors(contentColor = DisplayCyan),
+                    contentPadding = PaddingValues(horizontal = 4.dp)) { Text("定位设置", fontSize = 12.sp) }
             }
         }
     }
