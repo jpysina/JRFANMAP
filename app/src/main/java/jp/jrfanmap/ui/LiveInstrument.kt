@@ -77,13 +77,13 @@ private val DisplayAccent = Color(NEXT_STATION_COLOR)
 private val StationAccent = Color(LATER_STATION_COLOR)
 private val HudRadius = 20.dp
 private val DisplayShape = RoundedCornerShape(HudRadius)
-private val LiquidRim = Brush.linearGradient(listOf(Color(0xD9D8E7FF), Color(0x516F84B0), Color(0xC39BBCDE)))
-private val FrostedRim = Brush.linearGradient(listOf(Color(0x9AA7BBD9), Color(0x4B64769A)))
-private val DisplayControl = Color(0x258BA5D4)
+private val LiquidRim = Brush.linearGradient(listOf(Color(0xE6F4F4F4), Color(0x42FFFFFF), Color(0xBBEEEEEE)))
+private val FrostedRim = Brush.linearGradient(listOf(Color(0x80FFFFFF), Color(0x39FFFFFF)))
+private val DisplayControl = Color.White.copy(alpha = .13f)
 private val DisplayDigits = FontFamily(Font(R.font.chakra_petch_semibold, FontWeight.SemiBold))
 
 internal enum class HudMaterial(val title: String) {
-    LIQUID("液态玻璃"), FROSTED("毛玻璃");
+    LIQUID("液态玻璃"), FROSTED("亚克力毛玻璃");
 
     companion object {
         val supportsLiquid: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -108,19 +108,19 @@ internal fun LiveIntervalCard(
         Box {
             if (glassTarget != null) HudBackdrop(glassTarget, liquid, Modifier.matchParentSize())
             Column(Modifier.fillMaxWidth().drawBehind {
-                val tint = if (liquid) {
-                    listOf(Color(0x263D5585), Color(0x36121936))
-                } else if (glassTarget != null) {
-                    listOf(Color(0xA6313C58), Color(0xCB1E283F))
-                } else {
-                    listOf(Color(0xF62A3651), Color(0xFB171E33))
-                }
-                drawRect(Brush.verticalGradient(tint))
                 if (liquid) {
+                    drawRect(Color.Black.copy(alpha = .08f))
                     val inset = 2.4.dp.toPx()
-                    drawRoundRect(Brush.linearGradient(listOf(Color(0x557C9FCE), Color.Transparent, Color(0x477EACD6))),
+                    drawRoundRect(Brush.linearGradient(listOf(Color(0x64FFFFFF), Color.Transparent, Color(0x4FFFFFFF))),
                         topLeft = Offset(inset, inset), size = Size(size.width - 2 * inset, size.height - 2 * inset),
                         cornerRadius = CornerRadius(HudRadius.toPx() - inset), style = Stroke(.8.dp.toPx()))
+                } else {
+                    val veil = if (glassTarget != null) {
+                        listOf(Color(0x2AB0B0B0), Color(0x54222222))
+                    } else {
+                        listOf(Color(0xF62C2C2C), Color(0xFB171717))
+                    }
+                    drawRect(Brush.verticalGradient(veil))
                 }
             }.padding(start = 13.dp, end = 13.dp, bottom = 9.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -141,10 +141,8 @@ internal fun LiveIntervalCard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     VelocityReadout(speed, match?.line?.category == "1")
                     if (upcoming != null) Surface(Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
-                        color = Color.Transparent, border = BorderStroke(1.dp, DisplayAccent.copy(alpha = .31f))) {
-                        Column(Modifier.background(Brush.horizontalGradient(
-                            listOf(Color(0xF3263A3D), Color(0xE61D263A))))
-                            .padding(horizontal = 10.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                        color = Color.Black.copy(alpha = .26f), border = BorderStroke(1.dp, Color.White.copy(alpha = .26f))) {
+                        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                             Text("下一经由站", color = DisplayAccent, fontSize = 10.sp, lineHeight = 13.sp)
                             Text(upcoming.station.name, color = DisplayText, fontWeight = FontWeight.Bold,
                                 fontSize = 19.sp, lineHeight = 23.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -221,7 +219,11 @@ private class LiquidHudBackdrop(context: Context) : BlurView(context) {
                 if (dot(corner, corner) > 0.001) normal = normalize(corner);
                 float2 bend = normal * sign(position) * rim * rim * lensWidth * 0.72;
                 half4 refracted = backdrop.eval(clamp(point - bend, float2(0.0), viewport - 1.0));
-                return mix(half4(0.068, 0.088, 0.152, 1.0), refracted, half(0.25 + rim * 0.59));
+                // Attenuate bright map features with a single gain so the glass adds no hue.
+                float luma = dot(float3(refracted.rgb), float3(0.2126, 0.7152, 0.0722));
+                float limit = 0.31 + 0.38 * rim * rim * rim;
+                half transmission = half(min(0.82 + rim * 0.15, limit / max(luma, 0.001)));
+                return half4(refracted.rgb * transmission, refracted.a);
             }
         """.trimIndent())
         shader.setFloatUniform("viewport", width.toFloat(), height.toFloat())
