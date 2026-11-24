@@ -102,12 +102,12 @@ jobs:
             tests: jp.jrfanmap.RailScreenshotTest#captureLivePortrait
             count: 1 test
             rotation: 0
-            snapshots: live-portrait
+            snapshots: live-portrait live-portrait-frosted
           - profile: landscape
             tests: jp.jrfanmap.RailScreenshotTest#captureLiveLandscape
             count: 1 test
             rotation: 1
-            snapshots: live-landscape
+            snapshots: live-landscape live-landscape-frosted
           - profile: history
             tests: jp.jrfanmap.RailScreenshotTest#captureHistory
             count: 1 test

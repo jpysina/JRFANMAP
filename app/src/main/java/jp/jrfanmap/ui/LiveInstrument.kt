@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -26,6 +28,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -72,13 +77,23 @@ private val DisplayAccent = Color(NEXT_STATION_COLOR)
 private val StationAccent = Color(LATER_STATION_COLOR)
 private val HudRadius = 20.dp
 private val DisplayShape = RoundedCornerShape(HudRadius)
-private val DisplayRim = Brush.linearGradient(listOf(Color(0xB1C0CEEE), Color(0x386778A8), Color(0x796F88AF)))
+private val LiquidRim = Brush.linearGradient(listOf(Color(0xD9D8E7FF), Color(0x516F84B0), Color(0xC39BBCDE)))
+private val FrostedRim = Brush.linearGradient(listOf(Color(0x9AA7BBD9), Color(0x4B64769A)))
 private val DisplayControl = Color(0x258BA5D4)
 private val DisplayDigits = FontFamily(Font(R.font.chakra_petch_semibold, FontWeight.SemiBold))
 
+internal enum class HudMaterial(val title: String) {
+    LIQUID("液态玻璃"), FROSTED("毛玻璃");
+
+    companion object {
+        val supportsLiquid: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        fun fromSetting(value: String?) = if (supportsLiquid && value != FROSTED.name) LIQUID else FROSTED
+    }
+}
+
 @Composable
 internal fun LiveIntervalCard(
-    telemetry: Telemetry, fix: Fix?, match: LiveMatch?, ahead: List<AheadStation>, reason: String,
+    telemetry: Telemetry, fix: Fix?, match: LiveMatch?, ahead: List<AheadStation>, reason: String, material: HudMaterial,
     onRecord: () -> Unit, onPermission: () -> Unit, onDetails: (() -> Unit)?, modifier: Modifier = Modifier,
     glassTarget: BlurTarget? = null
 ) {
@@ -86,18 +101,27 @@ internal fun LiveIntervalCard(
     val interval = match?.interval
     val upcoming = ahead.firstOrNull()
     val routeName = match?.line?.name
+    val liquid = material == HudMaterial.LIQUID && glassTarget != null
     Surface(modifier.testTag("live-interval-card"), color = Color.Transparent, shape = DisplayShape,
-        border = BorderStroke(1.dp, DisplayRim), shadowElevation = 6.dp) {
+        border = BorderStroke(if (liquid) 1.25.dp else 1.dp, if (liquid) LiquidRim else FrostedRim),
+        shadowElevation = 6.dp) {
         Box {
-            if (glassTarget != null) HudBackdrop(glassTarget, Modifier.matchParentSize())
+            if (glassTarget != null) HudBackdrop(glassTarget, liquid, Modifier.matchParentSize())
             Column(Modifier.fillMaxWidth().drawBehind {
-                val top = if (glassTarget != null) Color(0xB6262C48) else Color(0xF6262C48)
-                val bottom = if (glassTarget != null) Color(0xE113172C) else Color(0xFB13172C)
-                drawRect(Brush.verticalGradient(listOf(top, bottom)))
-                drawRect(Brush.radialGradient(listOf(Color(0x26869DE8), Color.Transparent),
-                    center = Offset(size.width * .16f, 0f), radius = size.width * .65f))
-                drawLine(Brush.horizontalGradient(listOf(Color.Transparent, Color(0xA5D6DEFF), Color.Transparent)),
-                    Offset(size.width * .05f, 1.dp.toPx()), Offset(size.width * .95f, 1.dp.toPx()), .8.dp.toPx())
+                val tint = if (liquid) {
+                    listOf(Color(0x263D5585), Color(0x36121936))
+                } else if (glassTarget != null) {
+                    listOf(Color(0xA6313C58), Color(0xCB1E283F))
+                } else {
+                    listOf(Color(0xF62A3651), Color(0xFB171E33))
+                }
+                drawRect(Brush.verticalGradient(tint))
+                if (liquid) {
+                    val inset = 2.4.dp.toPx()
+                    drawRoundRect(Brush.linearGradient(listOf(Color(0x557C9FCE), Color.Transparent, Color(0x477EACD6))),
+                        topLeft = Offset(inset, inset), size = Size(size.width - 2 * inset, size.height - 2 * inset),
+                        cornerRadius = CornerRadius(HudRadius.toPx() - inset), style = Stroke(.8.dp.toPx()))
+                }
             }.padding(start = 13.dp, end = 13.dp, bottom = 9.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.width(3.dp).height(16.dp).background(if (routeName != null) StationAccent else DisplayMuted, DisplayShape))
@@ -150,10 +174,11 @@ internal fun LiveIntervalCard(
 }
 
 @Composable
-private fun HudBackdrop(target: BlurTarget, modifier: Modifier) {
-    key(target) {
+private fun HudBackdrop(target: BlurTarget, liquid: Boolean, modifier: Modifier) {
+    key(target, liquid) {
         AndroidView(factory = { context ->
-            LiquidHudBackdrop(context).apply {
+            val backdrop = if (liquid) LiquidHudBackdrop(context) else BlurView(context)
+            backdrop.apply {
                 clipToOutline = true
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 outlineProvider = object : ViewOutlineProvider() {
@@ -161,7 +186,8 @@ private fun HudBackdrop(target: BlurTarget, modifier: Modifier) {
                         outline.setRoundRect(0, 0, view.width, view.height, HudRadius.value * view.resources.displayMetrics.density)
                     }
                 }
-                setupWith(target).setBlurRadius(16f)
+                val radiusDp = if (liquid) 2.4f else 24f
+                setupWith(target, 1f, !liquid).setBlurRadius(radiusDp * resources.displayMetrics.density)
             }
         }, modifier = modifier, onRelease = { it.setBlurEnabled(false) })
     }
@@ -190,20 +216,25 @@ private class LiquidHudBackdrop(context: Context) : BlurView(context) {
                 float2 edge = abs(position) - (middle - radius);
                 float distanceToRim = length(max(edge, float2(0.0))) + min(max(edge.x, edge.y), 0.0) - radius;
                 float rim = smoothstep(-lensWidth, 0.0, distanceToRim);
-                float2 bend = position / max(middle, float2(1.0)) * rim * rim * lensWidth * 0.48;
-                return backdrop.eval(clamp(point - bend, float2(0.0), viewport - 1.0));
+                float2 corner = max(edge, float2(0.0));
+                float2 normal = (edge.x > edge.y) ? float2(1.0, 0.0) : float2(0.0, 1.0);
+                if (dot(corner, corner) > 0.001) normal = normalize(corner);
+                float2 bend = normal * sign(position) * rim * rim * lensWidth * 0.72;
+                half4 refracted = backdrop.eval(clamp(point - bend, float2(0.0), viewport - 1.0));
+                return mix(half4(0.068, 0.088, 0.152, 1.0), refracted, half(0.25 + rim * 0.59));
             }
         """.trimIndent())
         shader.setFloatUniform("viewport", width.toFloat(), height.toFloat())
         shader.setFloatUniform("radius", HudRadius.value * density)
-        shader.setFloatUniform("lensWidth", 12f * density)
+        shader.setFloatUniform("lensWidth", 21f * density)
         setRenderEffect(RenderEffect.createRuntimeShaderEffect(shader, "backdrop"))
     }
 }
 
 @Composable
 internal fun LiveMapControls(
-    following: Boolean, immersive: Boolean, onFollow: () -> Unit, onFullscreen: () -> Unit, modifier: Modifier = Modifier
+    following: Boolean, immersive: Boolean, material: HudMaterial, onMaterial: (HudMaterial) -> Unit,
+    onFollow: () -> Unit, onFullscreen: () -> Unit, modifier: Modifier = Modifier
 ) {
     val followTint by animateColorAsState(if (following) DisplayCyan else DisplayText, tween(170), label = "map follow tint")
     Surface(modifier, color = DisplayPanel.copy(alpha = .88f), shape = RoundedCornerShape(17.dp),
@@ -241,6 +272,26 @@ internal fun LiveMapControls(
                         lineTo(farCorner, farTip)
                     }
                     drawPath(glyph, DisplayText, style = Stroke(width = 1.55.dp.toPx(), cap = StrokeCap.Round))
+                }
+            }
+            if (HudMaterial.supportsLiquid) {
+                HorizontalDivider(Modifier.width(28.dp), color = DisplayGrid.copy(alpha = .9f))
+                var expanded by remember { mutableStateOf(false) }
+                Box {
+                    TextButton(onClick = { expanded = true }, modifier = Modifier.size(48.dp).semantics {
+                        stateDescription = material.title
+                    }, contentPadding = PaddingValues(0.dp), colors = ButtonDefaults.textButtonColors(contentColor = DisplayText)) {
+                        Text("材质", fontSize = 11.sp)
+                    }
+                    DropdownMenu(expanded, onDismissRequest = { expanded = false }, containerColor = DisplayPanel) {
+                        HudMaterial.entries.forEach { item ->
+                            DropdownMenuItem(text = { Text(item.title, color = if (item == material) DisplayAccent else DisplayText) },
+                                onClick = {
+                                    expanded = false
+                                    onMaterial(item)
+                                }, modifier = Modifier.semantics { stateDescription = if (item == material) "当前材质" else "可选材质" })
+                        }
+                    }
                 }
             }
         }

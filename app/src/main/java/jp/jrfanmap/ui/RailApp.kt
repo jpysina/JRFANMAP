@@ -57,6 +57,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var immersive by rememberSaveable { mutableStateOf(false) }
     var keep by rememberSaveable { mutableStateOf(prefs.getBoolean("keep", true)) }
+    var hudMaterial by remember { mutableStateOf(HudMaterial.fromSetting(prefs.getString("hud_material", null))) }
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtimeNanos()) }
     val fresh = telemetry.active && telemetry.fix?.let { FixPolicy.fresh(it, now) } == true
     val snackbar = remember { SnackbarHostState() }
@@ -84,7 +85,11 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
                     if (!immersive && side) InstrumentNav(tab, true, select)
                     Box(Modifier.weight(1f).fillMaxHeight()) {
                         when (tab) {
-                            0 -> LivePage(model, catalog, telemetry, live, now, fresh, immersive, onRecord, onLocationPermission) { immersive = !immersive }
+                            0 -> LivePage(model, catalog, telemetry, live, now, fresh, immersive, hudMaterial,
+                                onMaterial = { material ->
+                                    hudMaterial = material
+                                    prefs.edit().putString("hud_material", material.name).apply()
+                                }, onRecord = onRecord, onPermission = onLocationPermission) { immersive = !immersive }
                             1 -> GpsPage(telemetry, now, fresh, onLocationPermission)
                             2 -> RailMapPage(model, telemetry, fresh, catalog, live)
                             3 -> History(model, onExport) { tab = 0 }
@@ -102,6 +107,7 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
 
 @Composable private fun LivePage(model: RailViewModel, catalog: CatalogState, t: Telemetry,
                                  match: LiveMatch, now: Long, fresh: Boolean, immersive: Boolean,
+                                 material: HudMaterial, onMaterial: (HudMaterial) -> Unit,
                                  onRecord: () -> Unit, onPermission: () -> Unit, toggleImmersive: () -> Unit) {
     val fix = t.fix.takeIf { fresh }
     val currentMatch = match.takeIf {
@@ -154,10 +160,10 @@ fun RailApp(model: RailViewModel, onRecord: () -> Unit, onLocationPermission: ()
             }
             if (preview) PreviewCaption(Modifier)
         }
-        LiveMapControls(follow, immersive, { follow = true }, toggleImmersive,
+        LiveMapControls(follow, immersive, material, onMaterial, { follow = true }, toggleImmersive,
             Modifier.align(Alignment.TopEnd).padding(10.dp))
 
-        if (selection.isEmpty) LiveIntervalCard(t, fix, currentMatch, ahead, reason, onRecord, onPermission,
+        if (selection.isEmpty) LiveIntervalCard(t, fix, currentMatch, ahead, reason, material, onRecord, onPermission,
             onDetails = line?.let { { selection = RailSelectionState(lines = listOf(it.id), openDetails = true) } },
             modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 29.dp).width(cardWidth),
             glassTarget = handle.blurTarget)

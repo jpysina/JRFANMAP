@@ -4,6 +4,7 @@ import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.SystemClock
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -32,7 +33,7 @@ class RailScreenshotTest {
 
     @Test fun captureLivePortrait() {
         val simulate = prepareInterval()
-        capture("live-portrait")
+        captureLiveMaterials("portrait", simulate)
         compose.onNodeWithTag("live-station-details").performClick()
         compose.waitUntil(12_000) { compose.onAllNodesWithTag("rail-station-row").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("站点名录").assertIsDisplayed()
@@ -51,10 +52,25 @@ class RailScreenshotTest {
     }
 
     @Test fun captureLiveLandscape() {
-        prepareInterval()
+        val simulate = prepareInterval()
         val page = compose.onNodeWithTag("live-page").fetchSemanticsNode().boundsInRoot
         assertTrue(page.width > page.height)
-        capture("live-landscape")
+        captureLiveMaterials("landscape", simulate)
+    }
+
+    private fun captureLiveMaterials(orientation: String, simulate: (Long, Boolean) -> Unit) {
+        val selector = compose.onNodeWithText("材质")
+        selector.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "液态玻璃"))
+        capture("live-$orientation")
+        selector.performClick()
+        compose.onNodeWithText("毛玻璃").performClick()
+        selector.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "毛玻璃"))
+        simulate(0, true)
+        compose.onNodeWithTag("live-speed").assertTextEquals("72").assertIsDisplayed()
+        capture("live-$orientation-frosted")
+        selector.performClick()
+        compose.onNodeWithText("液态玻璃").performClick()
+        selector.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "液态玻璃"))
     }
 
     @Test fun captureHistory() {
