@@ -14,6 +14,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -106,6 +108,7 @@ fun RailMap(
     val view = remember { MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(true)).apply { onCreate(Bundle()) } }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var loadedStyle by remember { mutableStateOf<Style?>(null) }
+    var loadedNavigationMode by remember { mutableStateOf<String?>(null) }
     var viewport by remember { mutableStateOf<Viewport?>(null) }
     var showingShinjuku by remember { mutableStateOf(false) }
     var lastJapanCenter by remember { mutableStateOf<GeoPoint?>(null) }
@@ -219,6 +222,7 @@ fun RailMap(
     LaunchedEffect(map, styleUri) {
         val instance = map ?: return@LaunchedEffect
         loadedStyle = null
+        loadedNavigationMode = null
         instance.setStyle(Style.Builder().fromUri(styleUri)) { style ->
             val empty = FeatureCollection.fromFeatures(emptyList<Feature>())
             style.addSource(GeoJsonSource("rail-local", empty))
@@ -268,6 +272,11 @@ fun RailMap(
             style.addLayer(CircleLayer("device-dot", "device").withProperties(circleColor(if (navigation) "#67BCCD" else "#017D72"), circleRadius(7f),
                 circleStrokeColor("#FFFFFF"), circleStrokeWidth(3f)))
             loadedStyle = style
+            loadedNavigationMode = when (styleUri) {
+                NAVIGATION_STYLE -> "在线导航底图"
+                NAVIGATION_OFFLINE_STYLE -> "离线导航底图"
+                else -> null
+            }
             viewport = instance.viewport()
         }
     }
@@ -407,7 +416,9 @@ fun RailMap(
                 handle.blurTarget = this
             }
         } else view
-    }, modifier = modifier.testTag(if (loadedStyle != null) "rail-map-ready" else "rail-map-loading"))
+    }, modifier = modifier.testTag(if (loadedStyle != null) "rail-map-ready" else "rail-map-loading").semantics {
+        loadedNavigationMode?.let { stateDescription = it }
+    })
 }
 
 private fun aheadMarkerId(order: Int) = "ahead-station-$order"

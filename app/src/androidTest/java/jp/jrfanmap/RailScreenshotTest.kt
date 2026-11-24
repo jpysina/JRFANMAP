@@ -38,9 +38,11 @@ class RailScreenshotTest {
         compose.waitUntil(12_000) { compose.onAllNodesWithTag("rail-station-row").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("站点名录").assertIsDisplayed()
         compose.onNodeWithTag("rail-info-close").performClick()
+        val offlineMap = hasTestTag("rail-map-ready") and
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "离线导航底图")
         compose.waitUntil(15_000) {
             simulate(0, false)
-            mapIsPainted(checkRoads = false)
+            compose.onAllNodes(offlineMap).fetchSemanticsNodes().isNotEmpty() && mapIsPainted(checkRoads = false)
         }
         simulate(20_000, false)
         compose.waitUntil(10_000) {
@@ -169,7 +171,7 @@ class RailScreenshotTest {
                     if (x > image.width * 2 / 5 && r in 207..217 && g in 239..250 && b in 173..188) nextStation++
                 }
             }
-            return (roads > 24) == checkRoads && route > 12 && nextStation > 8
+            return (!checkRoads || roads > 24) && route > 12 && nextStation > 8
         } finally { image.recycle() }
     }
 
